@@ -38,9 +38,11 @@ for /f "usebackq eol=# tokens=1,2 delims=|" %%A in ("%APP_HOME%\conf\service-hos
     )
 )
 set /a HOST_COUNT=0
+set "NODE_FAIL="
 for /f "usebackq tokens=*" %%H in ("%HOSTS_FILE%") do (
     set /a HOST_COUNT+=1
     call :BUILD "%%H"
+    if errorlevel 1 set "NODE_FAIL=1"
 )
 del "%HOSTS_FILE%" >nul 2>&1
 if %HOST_COUNT%==0 (
@@ -208,6 +210,10 @@ exit /b 0
 
 :DONE
 echo.
+if defined NODE_FAIL (
+    echo Done with errors. Node packages: %OUT_ROOT%
+    exit /b 1
+)
 echo Done. Node packages: %OUT_ROOT%
 exit /b 0
 

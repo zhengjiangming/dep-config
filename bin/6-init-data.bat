@@ -61,8 +61,30 @@ if not exist "%MYSQL_HOME%\bin\mysql.exe" (
     echo   FAIL mysql client not found: %MYSQL_HOME%\bin\mysql.exe
     exit /b 1
 )
+rem root has no password right after init, but needs one once it is set: probe which auth mode works
+rem the client also reads MYSQL_PWD from the environment, so clear it for the passwordless probe
+rem do not use "mysqladmin ping" here, it also returns 0 on Access denied
+set "MPWD_OK="
+if defined MYSQL_PWD (
+    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --password="%MYSQL_PWD%" -e "SELECT 1" >nul 2>&1
+    if not errorlevel 1 set "MPWD_OK=1"
+)
+if not defined MPWD_OK (
+    set "MYSQL_PWD="
+    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% -e "SELECT 1" >nul 2>&1
+    if errorlevel 1 (
+        echo   FAIL MySQL auth failed: %MYSQL_USER%@%MYSQL_HOST%:%MYSQL_PORT%
+        echo        check MYSQL_USER / MYSQL_PWD in conf\deploy.properties, or whether MySQL is running
+        exit /b 1
+    )
+)
 echo   [MySQL] %SCRIPTNAME%  db=%DBNAME%
-"%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --default-character-set=utf8mb4 %DBNAME% < "%SCRIPT%"
+if defined MPWD_OK (
+    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --password="%MYSQL_PWD%" --default-character-set=utf8mb4 %DBNAME% < "%SCRIPT%"
+) else (
+    echo   WARN MySQL root has no password yet, run bin\0-init.bat once to set MYSQL_PWD
+    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --default-character-set=utf8mb4 %DBNAME% < "%SCRIPT%"
+)
 if errorlevel 1 (
     echo   FAIL MySQL import failed: %SCRIPTNAME%
     exit /b 1

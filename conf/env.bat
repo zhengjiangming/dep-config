@@ -79,6 +79,13 @@ if not defined INFRA_JDK set "INFRA_JDK=17"
 set "JDK_HOME=%APP_HOME%\runtime\jdk%INFRA_JDK%"
 if /i "%INFRA_JDK%"=="17" set "JDK_HOME=%JDK17_HOME%"
 if /i "%INFRA_JDK%"=="21" set "JDK_HOME=%JDK21_HOME%"
+rem fall back to JDK17 when the selected JDK is missing, never start with an empty JAVA_HOME
+if not exist "%JDK_HOME%\bin\java.exe" (
+    if /i not "%INFRA_JDK%"=="17" echo   [WARN] JDK%INFRA_JDK% not found, falling back to JDK17
+    set "INFRA_JDK=17"
+    set "JDK_HOME=%JDK17_HOME%"
+)
+if not exist "%JDK_HOME%\bin\java.exe" echo   [WARN] JDK17 runtime not found, infrastructure may fail to start
 set "JAVA_HOME=%JDK_HOME%"
 set "PATH=%JDK_HOME%\bin;%PATH%"
 

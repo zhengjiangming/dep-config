@@ -249,8 +249,10 @@ namespace BatAppSetup
             sb.AppendLine("# format: 名称|路径   (名称可省略，只写路径)");
             foreach (CfgItem it in items)
             {
-                if (it.Name != null && it.Name.Length > 0)
-                    sb.AppendLine(it.Name + "|" + it.Path);
+                // “名称|路径”只有第一个竖线是分隔符，名称里的竖线会让路径解析错位
+                string nm = it.Name == null ? "" : it.Name.Replace("|", "").Trim();
+                if (nm.Length > 0)
+                    sb.AppendLine(nm + "|" + it.Path);
                 else
                     sb.AppendLine(it.Path);
             }

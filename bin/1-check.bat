@@ -57,7 +57,7 @@ if "%START_NGINX%"=="1" (call :ISFREE %PORT_NGINX% Nginx) else (echo   REMOTE Ng
 
 echo.
 echo [5] Jar list from conf\apps.cfg
-for /f "usebackq eol=# tokens=1,2,3 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do call :CHKJAR %%A %%B %%C
+for /f "usebackq eol=# tokens=1,2,3 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do call :CHKJAR "%%A" "%%B" "%%C"
 echo.
 pause
 exit /b 0

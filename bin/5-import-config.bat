@@ -36,6 +36,7 @@ for %%E in (yaml yml properties) do (
 )
 if %CNT%==0 goto :NO_FILE
 
+set "FAILCNT=0"
 for %%E in (yaml yml properties) do (
     if exist "%APP_HOME%\conf\nacos\*.%%E" (
         for %%F in ("%APP_HOME%\conf\nacos\*.%%E") do (
@@ -55,21 +56,25 @@ for %%E in (yaml yml properties) do (
             )
             echo   publish %%~nxF ... [dataId=!DATAID! type=!CFGTYPE!]
             "%CURL%" -s -f -m 20 -X POST "http://%NACOS_ADDR%/nacos/v1/cs/configs" -d "dataId=!DATAID!" -d "group=!GRP!" -d "tenant=!TEN!" -d "type=!CFGTYPE!" --data-urlencode "content@%%~fF" >nul 2>&1
-            if errorlevel 1 (echo     FAIL) else (echo     OK)
+            if errorlevel 1 (echo     FAIL & set /a FAILCNT+=1) else (echo     OK)
         )
     )
 )
 echo.
-echo   %CNT% file(s) processed.
+echo   %CNT% file(s) processed, %FAILCNT% failed.
 echo   Verify in console: http://%NACOS_ADDR%/nacos
 if defined NACOS_USER echo   NOTE: auth is enabled. If publish failed, import via Nacos console instead.
-pause
+if /i not "%~1"=="auto" pause
+if not "%FAILCNT%"=="0" (
+    echo   FAIL some configs were not published
+    exit /b 1
+)
 exit /b 0
 
 :NO_FILE
 echo   No yaml found in conf\nacos\
 echo   1) Read existing configs from Nacos first:
-echo      Setup.exe - 运行控制 - "读取 Nacos"
+echo      Setup.exe - Run control page - "Read Nacos"
 echo   2) Or put files into conf\nacos\, named like svc01-prod.yaml
 pause
 exit /b 0

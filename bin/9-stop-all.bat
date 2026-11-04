@@ -5,7 +5,7 @@ title Stop all
 
 echo.
 echo ===== Stop services / engine (local only) =====
-for /f "usebackq eol=# tokens=1,3 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do call :STOPSVC %%A %%B
+for /f "usebackq eol=# tokens=1,3 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do call :STOPSVC "%%A" "%%B"
 
 echo.
 echo ===== Stop Nginx =====
@@ -85,14 +85,14 @@ if defined SP_HOST if /i not "%SP_HOST%"=="%SP_SELF%" (
     exit /b 0
 )
 echo   stop %~1 ...
-call :KILLPORT %~2
+call :KILLPORT "%~2"
 exit /b 0
 
 rem ---------- kill process by listening port ----------
 rem  %1 = port. Only kill processes belonging to this deployment, so a port
 rem  taken by IIS / another Java app is never force-killed by accident.
 :KILLPORT
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%~1 .*LISTENING"') do call :KILLPID %%P %~1
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%~1 .*LISTENING"') do call :KILLPID %%P "%~1"
 exit /b 0
 
 :KILLPID

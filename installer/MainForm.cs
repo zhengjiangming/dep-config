@@ -740,6 +740,12 @@ namespace BatAppSetup
             };
             save.Click += delegate
             {
+                string badName = FindAppNameError();
+                if (badName.Length > 0)
+                {
+                    MessageBox.Show(badName, "配置有误");
+                    return;
+                }
                 AppsConfig cfg = CollectApps();
                 string bad = ValidateConfigNumbers(CollectDeploy(), cfg);
                 if (bad.Length > 0)
@@ -1392,7 +1398,13 @@ namespace BatAppSetup
             if (it == null) { MessageBox.Show("请先选中一个配置项"); return; }
             string n = PromptText("重命名配置项", "显示名称（留空则显示路径）", it.Name);
             if (n == null) return;
-            it.Name = n.Trim();
+            n = n.Trim();
+            if (n.IndexOf('|') >= 0)
+            {
+                MessageBox.Show("配置项名称不能包含 | 字符（会破坏 config-files.cfg 的“名称|路径”格式）");
+                return;
+            }
+            it.Name = n;
             ConfigList.SaveItems(workDir, txtCfgName.Text.Trim(), cfgItems);
             RefreshCfgList(it.Path);
         }
@@ -2583,9 +2595,29 @@ namespace BatAppSetup
             return v == null ? "" : v.ToString().Trim();
         }
 
+        // CollectApps 会静默丢弃没有服务名的行，保存/安装前先拦住，避免用户以为改动已生效
+        private string FindAppNameError()
+        {
+            foreach (DataGridViewRow row in dgvApps.Rows)
+            {
+                if (row.IsNewRow) continue;
+                if (Cell(row, "name").Length > 0) continue;
+                foreach (DataGridViewCell c in row.Cells)
+                {
+                    object v = c.Value;
+                    if (v != null && v.ToString().Trim().Length > 0)
+                        return "第 " + (row.Index + 1) + " 行缺少服务名：请填写名称，或删除这一行";
+                }
+            }
+            return "";
+        }
+
         // 保存/安装前统一校验：端口必须是 1-65535 的整数，且基础设施与服务不能撞端口
         private static string ValidateConfigNumbers(DeployConfig dc, AppsConfig ac)
         {
+            string jdk = dc.Get("INFRA_JDK").Trim();
+            if (jdk.Length > 0 && jdk != "17" && jdk != "21")
+                return "INFRA_JDK 只能是 17 或 21，当前为：" + jdk;
             Dictionary<int, string> used = new Dictionary<int, string>();
             foreach (string key in DeployConfig.Keys)
             {
@@ -2771,19 +2803,15 @@ namespace BatAppSetup
             }
 
             DeployConfig cfg = CollectDeploy();
-            string dataId;
-            string group;
-            string tenant;
             string baseUrl = NacosApi.BaseUrl(cfg);
             string user = cfg.Get("NACOS_USER");
             string pwd = cfg.Get("NACOS_PWD");
-            string token = "";
-            if (user.Length > 0)
-            {
-                try { token = NacosApi.Login(baseUrl, user, pwd); }
-                catch { }
-            }
 
+            string fileName = "";
+            string dataId;
+            string group;
+            string tenant;
+            bool probe = false;
             if (online)
             {
                 dataId = currentNacos.DataId;
@@ -2792,7 +2820,7 @@ namespace BatAppSetup
             }
             else
             {
-                string fileName = Path.GetFileName(full);
+                fileName = Path.GetFileName(full);
                 NacosMetaEntry me = null;
                 Dictionary<string, NacosMetaEntry> meta = NacosMeta.Load(workDir);
                 if (meta.ContainsKey(fileName)) me = meta[fileName];
@@ -2800,30 +2828,13 @@ namespace BatAppSetup
                 group = (me != null && me.Group.Length > 0) ? me.Group : cfg.Get("NACOS_GROUP");
                 if (group.Length == 0) group = "DEFAULT_GROUP";
                 tenant = (me != null && me.Tenant.Length > 0) ? me.Tenant : cfg.Get("NACOS_NAMESPACE");
-
-                if (me == null)
-                {
-                    try
-                    {
-                        string probe = NacosApi.GetConfig(baseUrl, group, tenant, dataId, token);
-                        if (probe == null)
-                        {
-                            string bare = Path.GetFileNameWithoutExtension(fileName);
-                            if (bare.Length > 0 && !string.Equals(bare, dataId, StringComparison.OrdinalIgnoreCase))
-                            {
-                                string probe2 = NacosApi.GetConfig(baseUrl, group, tenant, bare, token);
-                                if (probe2 != null) dataId = bare;
-                            }
-                        }
-                    }
-                    catch { }
-                    NacosMeta.Set(workDir, fileName, dataId, group, tenant);
-                }
+                probe = me == null;
             }
 
             string tip = "保存并写入 Nacos？\r\n\r\ndataId = " + dataId
                 + "\r\nGroup = " + group
-                + "\r\n命名空间 = " + (tenant.Length == 0 ? "public" : tenant);
+                + "\r\n命名空间 = " + (tenant.Length == 0 ? "public" : tenant)
+                + (probe ? "\r\n\r\n首次写入会探测 Nacos 上已存在的 dataId" : "");
             if (MessageBox.Show(tip, "确认", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
 
             int n = 0;
@@ -2834,7 +2845,10 @@ namespace BatAppSetup
             string did = dataId;
             string grp = group;
             string ten = tenant;
-            string tok = token;
+            string file = fileName;
+            string usr = user;
+            string pass = pwd;
+            bool needProbe = probe;
             string msg = "";
             running = true;
             SetRunButtons(false);
@@ -2842,6 +2856,32 @@ namespace BatAppSetup
             {
                 try
                 {
+                    // 登录和 dataId 探测都会访问 Nacos（单次最长 15s），必须放到后台线程，否则界面假死
+                    string tok = "";
+                    if (usr.Length > 0)
+                    {
+                        try { tok = NacosApi.Login(baseUrl, usr, pass); }
+                        catch { }
+                    }
+                    if (needProbe)
+                    {
+                        try
+                        {
+                            string got = NacosApi.GetConfig(baseUrl, grp, ten, did, tok);
+                            if (got == null)
+                            {
+                                string bare = Path.GetFileNameWithoutExtension(file);
+                                if (bare.Length > 0 && !string.Equals(bare, did, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string got2 = NacosApi.GetConfig(baseUrl, grp, ten, bare, tok);
+                                    if (got2 != null) did = bare;
+                                }
+                            }
+                        }
+                        catch { }
+                        try { NacosMeta.Set(workDir, file, did, grp, ten); }
+                        catch { }
+                    }
                     bool ok = NacosApi.Publish(baseUrl, grp, ten, did, type, content, tok);
                     msg = ok ? "已保存并写入 Nacos: " + did : "写入失败，Nacos 返回 false";
                 }
@@ -2894,6 +2934,12 @@ namespace BatAppSetup
                     MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             }
 
+            string badName = FindAppNameError();
+            if (badName.Length > 0)
+            {
+                MessageBox.Show(badName, "配置有误");
+                return;
+            }
             DeployConfig dc = CollectDeploy();
             AppsConfig ac = CollectApps();
             string bad = ValidateConfigNumbers(dc, ac);
