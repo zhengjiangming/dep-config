@@ -1,0 +1,4 @@
+OK
+bounds={X=462,Y=189,Width=1642,Height=1166}
+client={Width=1620, Height=1110}
+screen={X=0,Y=0,Width=2560,Height=1528}

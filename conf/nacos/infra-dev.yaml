@@ -1,0 +1,147 @@
+# PostgreSQL 独立业务库 dynamic_dashboard（表结构和演示数据已通过 JDBC 直接建好）。
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/dynamic_dashboard
+    driver-class-name: org.postgresql.Driver
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 10     # 大屏并发低，10 足够；防默认值过大拖垮 PG
+      minimum-idle: 2
+      connection-timeout: 3000  # 拿不到连接 3s 快速失败，不堆积请求
+  sql:
+    init:
+      mode: never           # 库表已初始化，应用启动不再执行 schema/data 脚本（需要重建时改回 always）
+  servlet:
+    multipart:              # 文档格式转换的上传通道：单文件上限须 ≥ dashboard.convert.max-file-size-mb
+      max-file-size: 55MB
+      max-request-size: 60MB
+
+server:
+  port: 8080
+  compression:              # option JSON 较大，gzip 显著省带宽
+    enabled: true
+    mime-types: application/json
+    min-response-size: 2048
+
+# 统计结果缓存 TTL：大屏轮询场景同模板+同参数在窗口内只执行一次 SQL。
+# 大屏数据实时性要求高就调小（如 5s），配合前端轮询间隔设置即可。
+dashboard:
+  datasource-encryption-key: ${DATASET_ENCRYPTION_KEY:}
+  test-endpoints: true       # 链路自检接口 /test/run /test/pipeline /test/sql（生产置 false）
+  stats-cache-ttl: 30s
+  stat-parallelism: 4        # 缓存未命中时多模板并行统计的线程数
+  stat-max-rows: 10000       # 单次统计查询的返回行数上限（防配置错误拖爆内存）
+  stat-query-timeout: 10s    # 单条统计查询的执行超时（含 SQL 图与跨库查询）；超时即取消，
+                             # 防止慢查询长期占住并行统计线程池拖垮整屏响应
+  stat-slow-warn: 2s         # 单条统计查询耗时达到该阈值时记 WARN 日志（模板/类型/耗时/参数），
+                             # 便于发现潜在慢查询；设为 0 关闭慢查询告警
+  # WebSocket 实时推送：服务端每 push-interval 重算订阅中的模块，逐图 diff
+  # 后只把变化的图推给大屏（绕过 stats-cache-ttl 取新鲜数据）。
+  # push-enabled=false 可整体关闭端点，回退纯 HTTP 轮询（灰度开关）。
+  push-enabled: true
+  push-interval: 5s
+  push-max-topics: 200       # 同时活跃的模块+参数组合上限，防止订阅激增导致重算任务和内存持续增长
+  # 引擎实时数据接入：MQ 消息（格式不固定，见 message-mappings）与 SQL
+  # 统计结果按图表 data_mapping 的 liveMerge 规则合并后，WS 增量推给大屏。
+  # live-debounce=突发消息防抖窗口，窗口内多条消息只触发一次重算推送。
+  live-debounce: 500ms
+  # 实时仓批次闲置淘汰 TTL：超过该时长未再收到消息的 deductionId 由后台线程
+  # 清理，避免引擎持续产生新批次导致内存累积。设为 0 关闭淘汰（长期运行不推荐）。
+  live-store-ttl: 30m
+  mq:
+    # MQ 总开关（默认关）：false 时不注册 RocketMQ 监听器、也不装配 /engine/push 接口，
+    # 本机无需启动 RocketMQ。需要接 MQ 时只改本文件，不传任何启动参数：
+    #   1) 把下面 enabled 改为 true
+    #   2) 取消文件末尾 rocketmq.* 连接配置的注释
+    # 然后重启后端即可。
+    enabled: false
+    topic: dashboard-live-metric   # 引擎发送实时指标的 topic
+    consumer-group: dashboard-live-consumer
+    # 消息 JSON 格式不固定：每套规则用 JsonPath 定位 批次id/阵营名/指标键值集，
+    # 逐套尝试、首个命中的生效。引擎换格式、同时发多种格式都只需改这里。
+    # metrics-path 写 $ 表示指标散放（单行模式在消息顶层、行模式在行内，自动去掉批次/阵营键）。
+    # 配了 rows-path 即"集合消息"模式：一条消息带多行（如一次上报全阵营），
+    # 此时 side/metrics 路径按行内相对取值。
+    # ====== 引擎→大屏 MQ 消息：统一一种线格式 ======
+    # 标准格式（引擎必须按此发送）：
+    # {
+    #   "deductionId": 10001,
+    #   "data": [
+    #     { "side": "红方", "metrics": { "destroy_count": 12, "loss_count": 2 } },
+    #     { "side": "蓝方", "metrics": { "destroy_count": 8 } }
+    #   ]
+    # }
+    # 规则：
+    #   - deductionId 必须与订阅者 query 参数一致
+    #   - side 必须与目标图表分类轴标签完全一致（红方/蓝方、步兵/炮兵…）
+    #   - metrics 键名必须与图表 data_mapping.liveMerge.metric 一致才会被合并
+    message-mappings:
+      - name: standard
+        deduction-id-path: $.deductionId
+        rows-path: $.data
+        side-path: $.side
+        metrics-path: $.metrics
+      # 兜底：引擎消息格式不定/多格式并存时，启发式按键名关键词自动识别
+      # 批次id/分类名/全部数值叶子。显式规则优先，未命中才轮到它。
+      - name: auto
+        auto-detect: true
+  zmq:
+    # ZMQ 总开关（默认关）：false 时不创建任何 socket、不起接收线程，
+    # 本机无需引擎在线即可正常启动。开启步骤（都在本文件内完成）：
+    #   1) 把 enabled 改为 true
+    #   2) endpoint 改成引擎 PUB 实际 bind 的地址
+    #   3) 重启后端。消息体与 MQ 线格式相同，解析复用上面 message-mappings。
+    enabled: true
+    endpoint: tcp://127.0.0.1:5555   # 引擎 PUB bind 地址（占位，按实际修改）
+    subscribe: ""                    # SUB 过滤前缀；空=收全部
+    reconnect-interval: 3s           # 断线重连间隔
+  # 无 broker 时用 POST /dashboard/live/simulate 注入原始 JSON 验证整条链路
+  # （与 MQ 消息体完全相同的解析通道），例：
+  # {"deductionId":10001,"data":[{"side":"红方","metrics":{"destroy_count":12}}]}
+  # 统计独立数据源（可选，可多个）：编码 -> 连接配置。统计模板引用的
+  # 逻辑数据源在 dashboard_stat_registry 表中标注 datasource_code 即走
+  # 对应库（NULL=主库）；未引用的库不会建立连接。系统配置表恒走主库。
+  # 换库/加库只改这里+注册表数据，代码零改动。
+  # stat-datasources:
+  #   battle-archive:                        # 任意编码，与注册表 datasource_code 对应
+  #     url: jdbc:postgresql://other-host:5432/battle_stats
+  #     username: postgres
+  #     password: postgres
+  #     maximum-pool-size: 4
+  #
+  # 演示：模拟"业务表在另一个库"。SQL 图表「数据源」填 battle-archive 即查该库，
+  # 跨库图表与主库图表都走同一套 CUSTOM_SQL 通道，代码零改动。
+  stat-datasources:
+    battle-archive:
+      url: jdbc:postgresql://localhost:5432/battle_archive
+      username: ${BATTLE_ARCHIVE_DB_USERNAME:postgres}
+      password: ${BATTLE_ARCHIVE_DB_PASSWORD:postgres}
+      maximum-pool-size: 2
+  # 文档格式转换（PDF⇄Word，独立页面 #/convert）：调用本机 Office COM 引擎，
+  # 高保真导出（MS Word 原生 / WPS 文字兜底），与统计模块完全独立。
+  # 本机未装引擎或 Office 未激活时，能力接口会返回不可用原因，前端页面顶部提示。
+  convert:
+    enabled: true
+    timeout-seconds: 120      # 单次转换上限；超时强杀转换进程并提示（防未激活 Office 卡死拖住请求）
+    max-file-size-mb: 50      # 业务层单文件上限；须 ≤ spring.servlet.multipart.max-file-size
+    max-concurrent: 1         # COM 是单实例串行引擎，默认 1（串行执行，避免多实例互抢）
+    queue-wait-seconds: 60    # 并发满时的排队等待上限，超时提示"转换任务繁忙"
+    # work-dir:               # 转换临时目录根；留空用 ${java.io.tmpdir}/dashboard-convert
+
+logging:
+  level:
+    com.example.dashboard: info
+
+# ===== RocketMQ 连接配置（默认关闭，保持注释） =====
+# 只有 dashboard.mq.enabled=true 时才需要这两项。关闭状态若保留为有效配置，
+# RocketMQ starter 会自动创建生产者并尝试连接 broker，等于强制本机启动 RocketMQ。
+# 开启步骤（都在本文件内完成，无需命令行参数）：
+#   1) 把上面 dashboard.mq.enabled 改为 true
+#   2) 取消下面 3 行注释
+#   3) 先跑 rocketmq/start-rocketmq.cmd 起 broker，再重启后端
+# 无 broker 想验证实时链路时用 POST /dashboard/live/simulate 注入原始 JSON。
+# rocketmq:
+#   name-server: 127.0.0.1:9876
+#   producer:
+#     group: dashboard-live-producer   # 缺此项 starter 不创建生产者，/engine/push 无法装配

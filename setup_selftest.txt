@@ -1,0 +1,8 @@
+root=D:\bao\bat_application
+runtime=False
+infra=True
+jdk17=False
+jdk21=False
+deploy=True
+apps=True
+ymlRows=96
