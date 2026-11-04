@@ -22,6 +22,8 @@ echo.
 echo ===== Start services assigned to this host (%DEPLOY_HOST%) =====
 set /a N=0
 set /a SKIPPED=0
+set "FAILED="
+set "FAILED_LIST="
 for /f "usebackq eol=# tokens=1,2,3,4,5,6 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do (
     set "SVC_NAME=%%~A"
     set "SVC_JAR=%APP_HOME%\%%~B"
@@ -43,14 +45,28 @@ for /f "usebackq eol=# tokens=1,2,3,4,5,6 delims=|" %%A in ("%APP_HOME%\conf\app
             set /a SKIPPED+=1
         ) else (
             call :START_ONE
+            if errorlevel 1 (
+                set "FAILED=1"
+                set "FAILED_LIST=!FAILED_LIST! !SVC_NAME!"
+            )
         )
     ) else (
         call :START_ONE
+        if errorlevel 1 (
+            set "FAILED=1"
+            set "FAILED_LIST=!FAILED_LIST! !SVC_NAME!"
+        )
     )
 )
 
 echo.
 echo Total !N! entries, skipped remote !SKIPPED!. Status: bin\4-status.bat   Logs: !LOG_DIR!
+if defined FAILED (
+    echo.
+    echo FAILED:!FAILED_LIST!  check logs in !LOG_DIR!
+    if not defined NO_PAUSE pause
+    exit /b 1
+)
 if not defined NO_PAUSE pause
 exit /b 0
 
@@ -61,16 +77,16 @@ if "!SVC_JDK!"=="17" set "SVC_JAVA=!JDK17_HOME!\bin\java.exe"
 if "!SVC_JDK!"=="21" set "SVC_JAVA=!JDK21_HOME!\bin\java.exe"
 if not defined SVC_JAVA (
     echo   [SKIP] !SVC_NAME!  bad jdk tag "!SVC_JDK!", use 17 or 21
-    exit /b 0
+    exit /b 1
 )
 if not exist "!SVC_JAR!" (
     echo   [MISS] !SVC_NAME!  jar not found: !SVC_JAR!
-    exit /b 0
+    exit /b 1
 )
 echo   [START] !SVC_NAME!  port=!SVC_PORT!  jdk=!SVC_JDK!
 start "!SVC_NAME!" /D "%APP_HOME%" /MIN cmd /c "!SVC_JAVA! !JVM_BASE! !APP_OPTS! !NACOS_OPTS! !SVC_JVM! -jar !SVC_JAR! !SVC_EXTRA! >> !LOG_DIR!\!SVC_NAME!.log 2>&1"
 call :WAITPORT !SVC_PORT! 180 "!SVC_NAME!"
-exit /b 0
+exit /b %errorlevel%
 
 rem ---------- wait until Nacos HTTP is reachable ----------
 :WAITNACOS

@@ -89,6 +89,21 @@ call :KILLPORT %~2
 exit /b 0
 
 rem ---------- kill process by listening port ----------
+rem  %1 = port. Only kill processes belonging to this deployment, so a port
+rem  taken by IIS / another Java app is never force-killed by accident.
 :KILLPORT
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%~1 .*LISTENING"') do taskkill /F /PID %%P >nul 2>&1
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%~1 .*LISTENING"') do call :KILLPID %%P %~1
+exit /b 0
+
+:KILLPID
+set "KP_IMG="
+for /f "tokens=1 delims=," %%I in ('tasklist /FI "PID eq %~1" /FO CSV /NH 2^>nul') do set "KP_IMG=%%~I"
+if not defined KP_IMG exit /b 0
+set "KP_OK="
+for %%I in (java.exe javaw.exe nginx.exe mysqld.exe postgres.exe redis-server.exe minio.exe) do if /i "!KP_IMG!"=="%%I" set "KP_OK=1"
+if not defined KP_OK (
+    echo   [SKIP] port %~2 is held by !KP_IMG! ^(PID %~1^), not a deployment process
+    exit /b 0
+)
+taskkill /F /PID %~1 >nul 2>&1
 exit /b 0

@@ -105,6 +105,8 @@ set /a SVC_COUNT=0
 set "NEED17="
 set "NEED21="
 set "NODE_ERROR="
+rem reset per host: otherwise a previous node's JDK choice leaks into the next one
+set "NODE_INFRA_JDK="
 for /f "usebackq eol=# tokens=1,2,3,4,5,6 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do (
     set "SVC_HOST="
     if exist "%APP_HOME%\conf\service-hosts.cfg" (

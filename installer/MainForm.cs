@@ -33,6 +33,9 @@ namespace BatAppSetup
         private List<CfgItem> cfgItems = new List<CfgItem>();
         private string currentCfgRel = "";
         private bool loadingCfgList;
+        private bool ymlDirty;
+        private bool loadingYml;
+        private int lastCfgIndex = -1;
         private Label lblCfgPath;
         private TextBox txtCfgName;
         private TextBox txtCfgNew;
@@ -616,10 +619,22 @@ namespace BatAppSetup
             bar.Controls.Add(deployHint);
             bar.Controls.Add(reload);
             bar.Controls.Add(save);
-            reload.Click += delegate { ReloadDeploy(); };
+            reload.Click += delegate
+            {
+                if (DeployDirty() && MessageBox.Show("部署参数有未保存的修改，重新读取将放弃这些修改。\r\n确定继续？",
+                    "未保存的修改", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                ReloadDeploy();
+            };
             save.Click += delegate
             {
-                CollectDeploy().Save(workDir);
+                DeployConfig cfg = CollectDeploy();
+                string bad = ValidateConfigNumbers(cfg, CollectApps());
+                if (bad.Length > 0)
+                {
+                    MessageBox.Show(bad, "配置有误");
+                    return;
+                }
+                cfg.Save(workDir);
                 MessageBox.Show("部署参数已保存到 " + PathHelper.DeployPath(workDir));
             };
         }
@@ -676,6 +691,7 @@ namespace BatAppSetup
             dgvApps.Dock = DockStyle.Fill;
             dgvApps.AllowUserToAddRows = true;
             dgvApps.AllowUserToDeleteRows = true;
+            dgvApps.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dgvApps.RowHeadersWidth = 30;
             dgvApps.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
             Theme.StyleGrid(dgvApps);
@@ -716,10 +732,22 @@ namespace BatAppSetup
             bar.Controls.Add(startSel);
             bar.Controls.Add(stopSel);
             bar.Controls.Add(restartSel);
-            reload.Click += delegate { ReloadApps(); };
+            reload.Click += delegate
+            {
+                if (AppsDirty() && MessageBox.Show("服务清单有未保存的修改，重新读取将放弃这些修改。\r\n确定继续？",
+                    "未保存的修改", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                ReloadApps();
+            };
             save.Click += delegate
             {
-                CollectApps().Save(workDir);
+                AppsConfig cfg = CollectApps();
+                string bad = ValidateConfigNumbers(CollectDeploy(), cfg);
+                if (bad.Length > 0)
+                {
+                    MessageBox.Show(bad, "配置有误");
+                    return;
+                }
+                cfg.Save(workDir);
                 MessageBox.Show("服务清单已保存到 " + PathHelper.AppsPath(workDir));
             };
             startSel.Click += delegate { ServiceAction("start"); };
@@ -830,6 +858,14 @@ namespace BatAppSetup
             lstCfgFiles.SelectedIndexChanged += delegate
             {
                 if (loadingCfgList) return;
+                if (!ConfirmDiscardYml())
+                {
+                    loadingCfgList = true;
+                    lstCfgFiles.SelectedIndex = lastCfgIndex;
+                    loadingCfgList = false;
+                    return;
+                }
+                lastCfgIndex = lstCfgFiles.SelectedIndex;
                 if (currentNacos != null)
                 {
                     currentNacos = null;
@@ -981,6 +1017,7 @@ namespace BatAppSetup
             dgvYml.Dock = DockStyle.Fill;
             dgvYml.AllowUserToAddRows = false;
             dgvYml.AllowUserToDeleteRows = false;
+            dgvYml.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             dgvYml.RowHeadersWidth = 30;
             Theme.StyleGrid(dgvYml);
             dgvYml.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.None;
@@ -997,6 +1034,7 @@ namespace BatAppSetup
             dgvYml.Columns["value"].DefaultCellStyle.Padding = new Padding(8, 0, 0, 0);
             dgvYml.RowsDefaultCellStyle.Font = Theme.Mono;
             dgvYml.Resize += delegate { LayoutYml(); };
+            dgvYml.CellValueChanged += delegate { if (!loadingYml) ymlDirty = true; };
             right.Controls.Add(dgvYml);
 
             txtCfgFile = new RichTextBox();
@@ -1007,6 +1045,7 @@ namespace BatAppSetup
             txtCfgFile.WordWrap = false;
             txtCfgFile.ScrollBars = RichTextBoxScrollBars.Both;
             txtCfgFile.Font = new Font("Consolas", 10f);
+            txtCfgFile.TextChanged += delegate { if (!loadingYml) ymlDirty = true; };
             right.Controls.Add(txtCfgFile);
 
             Panel bar = new Panel();
@@ -1033,7 +1072,10 @@ namespace BatAppSetup
             lblCfgPath.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             bar.Controls.Add(lblCfgPath);
 
-            scan.Click += delegate { ShowConfigFile(currentCfgRel); };
+            scan.Click += delegate
+            {
+                if (ConfirmDiscardYml()) ShowConfigFile(currentCfgRel);
+            };
             save.Click += delegate { SaveYml(); };
             open.Click += delegate
             {
@@ -1082,9 +1124,19 @@ namespace BatAppSetup
             return i < 0 ? null : cfgItems[i];
         }
 
+        // 未保存的单元格/文本修改会被“切换文件”“重新扫描”“读取 Nacos”直接冲掉，先确认
+        private bool ConfirmDiscardYml()
+        {
+            if (!ymlDirty) return true;
+            return MessageBox.Show("当前配置有未保存的修改，继续将放弃这些修改。\r\n确定继续？", "未保存的修改",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        }
+
         private void ShowConfigFile(string rel)
         {
             currentCfgRel = rel == null ? "" : rel;
+            loadingYml = true;
+            ymlDirty = false;
             dgvYml.Rows.Clear();
             deletedYmlRows.Clear();
             if (lblCfgPath != null)
@@ -1095,6 +1147,7 @@ namespace BatAppSetup
             {
                 dgvYml.Visible = true;
                 txtCfgFile.Visible = false;
+                loadingYml = false;
                 return;
             }
             string f = Path.IsPathRooted(currentCfgRel) ? currentCfgRel : Path.Combine(workDir, currentCfgRel);
@@ -1105,12 +1158,14 @@ namespace BatAppSetup
             if (!File.Exists(f))
             {
                 if (!tableMode) txtCfgFile.Text = "";
+                loadingYml = false;
                 return;
             }
             if (!tableMode)
             {
                 try { txtCfgFile.Text = File.ReadAllText(f); }
                 catch { txtCfgFile.Text = ""; }
+                loadingYml = false;
                 return;
             }
             List<YmlRow> rows = YmlEditor.ScanFile(workDir, currentCfgRel);
@@ -1122,6 +1177,7 @@ namespace BatAppSetup
                 UseMono(dgvYml.Rows[i]);
             }
             LayoutYml();
+            loadingYml = false;
         }
 
         private void ShowNacosConfig(NacosCfg c)
@@ -1129,6 +1185,8 @@ namespace BatAppSetup
             if (c == null) return;
             currentNacos = c;
             currentCfgRel = "";
+            loadingYml = true;
+            ymlDirty = false;
             deletedYmlRows.Clear();
             dgvYml.Rows.Clear();
             if (txtCfgFile != null) txtCfgFile.Visible = false;
@@ -1148,6 +1206,7 @@ namespace BatAppSetup
                 lblCfgPath.Text = "NACOS  ·  " + c.DataId + "   Group=" + c.Group
                     + "   命名空间=" + (c.Tenant.Length == 0 ? "public" : c.Tenant);
             LayoutYml();
+            loadingYml = false;
         }
 
         private void LayoutYml()
@@ -1198,6 +1257,7 @@ namespace BatAppSetup
             UseMono(dgvYml.Rows[i]);
             dgvYml.CurrentCell = dgvYml.Rows[i].Cells["key"];
             dgvYml.BeginEdit(true);
+            ymlDirty = true;
         }
 
         private void DeleteYmlProperty()
@@ -1226,6 +1286,7 @@ namespace BatAppSetup
                 }
                 dgvYml.Rows.Remove(row);
             }
+            ymlDirty = true;
         }
 
         private void AddConfigPath()
@@ -1769,52 +1830,32 @@ namespace BatAppSetup
             if (MessageBox.Show(msg.ToString(), "确认", MessageBoxButtons.YesNo) != DialogResult.Yes)
                 return;
 
-            running = true;
-            SetRunButtons(false);
-            txtRunLog.Clear();
-            ShowPage(5);
-            Thread th = new Thread(delegate()
+            RunTask("初始化数据", delegate()
             {
-                try
+                foreach (string s in scripts)
                 {
-                    foreach (string s in scripts)
+                    RunLog("");
+                    RunLog(">>> " + s);
+                    int rc = RunProcessArgs(@"bin\6-init-data.bat",
+                        target + " \"" + s + "\" \"" + db + "\"", workDir, RunLog);
+                    if (rc != 0)
                     {
-                        RunLog("");
-                        RunLog(">>> " + s);
-                        int rc = RunProcessArgs(@"bin\6-init-data.bat",
-                            target + " \"" + s + "\" \"" + db + "\"", workDir, RunLog);
-                        if (rc != 0)
-                        {
-                            RunLog("脚本执行失败，已停止后续脚本: " + s);
-                            break;
-                        }
+                        RunLog("脚本执行失败，已停止后续脚本: " + s);
+                        return 1;
                     }
-                    string minio = MinioDataPath();
-                    try { Directory.CreateDirectory(minio); }
-                    catch { }
-                    RunLog("MinIO 存储目录: " + minio);
                 }
-                catch (Exception ex)
-                {
-                    RunLog("执行异常: " + ex.Message);
-                }
-                finally
-                {
-                    BeginInvoke(new Action(delegate()
-                    {
-                        running = false;
-                        SetRunButtons(true);
-                        RunLog("任务结束");
-                    }));
-                }
-            });
-            th.IsBackground = true;
-            th.Start();
+                string minio = MinioDataPath();
+                try { Directory.CreateDirectory(minio); }
+                catch { }
+                RunLog("MinIO 存储目录: " + minio);
+                return 0;
+            }, null);
         }
 
         private void ServiceAction(string action)
         {
             if (running) { MessageBox.Show("有任务正在执行，请稍候"); return; }
+            if (!ConfirmUsingSavedConfig()) return;
             if (dgvApps.SelectedRows.Count == 0)
             {
                 MessageBox.Show("请先在服务列表中选中一行或多行");
@@ -1851,40 +1892,24 @@ namespace BatAppSetup
                 if (MessageBox.Show(tip + "\r\n" + string.Join(", ", names.ToArray()),
                     "确认", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             }
-            running = true;
-            SetRunButtons(false);
-            txtRunLog.Clear();
-            ShowPage(5);
-            string act = action;
-            Thread th = new Thread(delegate()
+            string title = action == "stop" ? "停止服务" : (action == "restart" ? "重启服务" : "启动服务");
+            RunTask(title, delegate()
             {
-                try
+                if (remotes.Count > 0)
+                    RunLog("跳过远程服务: " + string.Join(", ", remotes.ToArray()));
+                int failed = 0;
+                foreach (string n in names)
                 {
-                    if (remotes.Count > 0)
-                        RunLog("跳过远程服务: " + string.Join(", ", remotes.ToArray()));
-                    foreach (string n in names)
+                    RunLog("");
+                    RunLog(">>> " + action + " " + n);
+                    if (RunProcessArgs(@"bin\8-service.bat", action + " " + n, workDir, RunLog) != 0)
                     {
-                        RunLog("");
-                        RunLog(">>> " + act + " " + n);
-                        RunProcessArgs(@"bin\8-service.bat", act + " " + n, workDir, RunLog);
+                        failed++;
+                        RunLog("失败: " + action + " " + n);
                     }
                 }
-                catch (Exception ex)
-                {
-                    RunLog("执行异常: " + ex.Message);
-                }
-                finally
-                {
-                    BeginInvoke(new Action(delegate()
-                    {
-                        running = false;
-                        SetRunButtons(true);
-                        RunLog("任务结束");
-                    }));
-                }
-            });
-            th.IsBackground = true;
-            th.Start();
+                return failed == 0 ? 0 : 1;
+            }, null);
         }
 
         private static bool IsLocalHost(string host, string self)
@@ -1906,35 +1931,14 @@ namespace BatAppSetup
                 if (MessageBox.Show("未填写节点主机，将按 service-hosts.cfg 中已填写的所有远程主机生成节点包。\r\n"
                     + "输出目录: nodes\\node-<主机>，继续？", "确认", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             }
-            running = true;
-            SetRunButtons(false);
-            txtRunLog.Clear();
-            ShowPage(5);
             string arg = host.Length == 0 ? "all" : host;
-            Thread th = new Thread(delegate()
+            RunTask("生成节点包", delegate()
             {
-                try
-                {
-                    RunLog(">>> 生成节点包: " + (host.Length == 0 ? "所有远程主机" : host));
-                    RunProcessArgs(@"bin\make-node.bat", arg, workDir, RunLog);
-                    RunLog("节点包目录: " + Path.Combine(workDir, "nodes"));
-                }
-                catch (Exception ex)
-                {
-                    RunLog("生成失败: " + ex.Message);
-                }
-                finally
-                {
-                    BeginInvoke(new Action(delegate()
-                    {
-                        running = false;
-                        SetRunButtons(true);
-                        RunLog("任务结束");
-                    }));
-                }
-            });
-            th.IsBackground = true;
-            th.Start();
+                RunLog(">>> 生成节点包: " + (host.Length == 0 ? "所有远程主机" : host));
+                int rc = RunProcessArgs(@"bin\make-node.bat", arg, workDir, RunLog);
+                RunLog("节点包目录: " + Path.Combine(workDir, "nodes"));
+                return rc;
+            }, null);
         }
 
         private void BuildUnitsPage(Panel body)
@@ -2071,10 +2075,17 @@ namespace BatAppSetup
         }
 
         private bool refreshingUnits;
+        private bool refreshPending;
 
         private void RefreshUnits()
         {
-            if (dgvUnits == null || refreshingUnits) return;
+            if (dgvUnits == null) return;
+            if (refreshingUnits)
+            {
+                // 扫描期间来的刷新先记下，结束后补一轮，避免启动/停止后的状态停留在旧值
+                refreshPending = true;
+                return;
+            }
             DeployConfig cfg = DeployConfig.Load(workDir);
             List<UnitRow> list = new List<UnitRow>();
 
@@ -2109,6 +2120,7 @@ namespace BatAppSetup
             {
                 // 窗口句柄还没创建：推迟到句柄创建后再异步扫描，避免 netstat 阻塞首次显示
                 refreshingUnits = false;
+                refreshPending = false;
                 EventHandler onHandle = null;
                 onHandle = delegate
                 {
@@ -2127,9 +2139,14 @@ namespace BatAppSetup
                     {
                         FillUnits(ports);
                         refreshingUnits = false;
+                        if (refreshPending)
+                        {
+                            refreshPending = false;
+                            RefreshUnits();
+                        }
                     }));
                 }
-                catch { refreshingUnits = false; }
+                catch { refreshingUnits = false; refreshPending = false; }
             });
             th.IsBackground = true;
             th.Start();
@@ -2220,37 +2237,16 @@ namespace BatAppSetup
                 if (MessageBox.Show(tip + u.Name + "？", "确认", MessageBoxButtons.YesNo) != DialogResult.Yes)
                     return;
             }
+            if (!ConfirmUsingSavedConfig()) return;
             string script = u.IsApp ? @"bin\8-service.bat" : @"bin\9-infra.bat";
             string args = action + " " + u.Key;
-            running = true;
-            SetRunButtons(false);
-            txtRunLog.Clear();
-            ShowPage(5);
-            Thread th = new Thread(delegate()
+            string title = (action == "start" ? "启动 " : action == "stop" ? "停止 " : "重启 ") + u.Name;
+            RunTask(title, delegate()
             {
-                try
-                {
-                    RunLog("");
-                    RunLog(">>> " + args);
-                    RunProcessArgs(script, args, workDir, RunLog);
-                }
-                catch (Exception ex)
-                {
-                    RunLog("执行异常: " + ex.Message);
-                }
-                finally
-                {
-                    BeginInvoke(new Action(delegate()
-                    {
-                        running = false;
-                        SetRunButtons(true);
-                        RefreshUnits();
-                        RunLog("任务结束");
-                    }));
-                }
-            });
-            th.IsBackground = true;
-            th.Start();
+                RunLog("");
+                RunLog(">>> " + args);
+                return RunProcessArgs(script, args, workDir, RunLog);
+            }, delegate() { RefreshUnits(); });
         }
 
         private void ReadNacos()
@@ -2268,7 +2264,7 @@ namespace BatAppSetup
 
             running = true;
             SetRunButtons(false);
-            txtRunLog.Clear();
+            ClearLog(txtRunLog);
             ShowPage(5);
             Thread th = new Thread(delegate()
             {
@@ -2320,7 +2316,7 @@ namespace BatAppSetup
                 }
                 finally
                 {
-                    BeginInvoke(new Action(delegate()
+                    SafeBeginInvoke(delegate()
                     {
                         running = false;
                         SetRunButtons(true);
@@ -2337,7 +2333,7 @@ namespace BatAppSetup
                             RunLog("读取结束: 0 个配置"
                                 + (error.Length > 0 ? "，错误: " + error : ""));
                         }
-                    }));
+                    });
                 }
             });
             th.IsBackground = true;
@@ -2359,6 +2355,7 @@ namespace BatAppSetup
         private void SelectNacosIndex(int i)
         {
             if (i < 0 || i >= nacosCfgs.Count) return;
+            if (!ConfirmDiscardYml()) return;
             nacosIndex = i;
             btnNacosPick.Text = "Nacos: " + nacosCfgs[i].DataId + "  ▾";
             if (lstCfgFiles != null && lstCfgFiles.SelectedIndex >= 0)
@@ -2586,6 +2583,74 @@ namespace BatAppSetup
             return v == null ? "" : v.ToString().Trim();
         }
 
+        // 保存/安装前统一校验：端口必须是 1-65535 的整数，且基础设施与服务不能撞端口
+        private static string ValidateConfigNumbers(DeployConfig dc, AppsConfig ac)
+        {
+            Dictionary<int, string> used = new Dictionary<int, string>();
+            foreach (string key in DeployConfig.Keys)
+            {
+                if (!key.EndsWith("_PORT", StringComparison.OrdinalIgnoreCase)) continue;
+                string v = dc.Get(key).Trim();
+                if (v.Length == 0) continue;
+                int p;
+                if (!int.TryParse(v, out p) || p < 1 || p > 65535)
+                    return key + " 端口不合法：" + v + "\r\n端口必须是 1-65535 的整数";
+                if (used.ContainsKey(p))
+                    return key + " 与 " + used[p] + " 端口重复：" + p;
+                used[p] = key;
+            }
+            Dictionary<string, bool> names = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            foreach (AppEntry e in ac.Items)
+            {
+                if (e.Name.Length == 0) continue;
+                if (names.ContainsKey(e.Name))
+                    return "服务名重复：" + e.Name;
+                names[e.Name] = true;
+                string port = e.Port == null ? "" : e.Port.Trim();
+                int p;
+                if (!int.TryParse(port, out p) || p < 1 || p > 65535)
+                    return "服务 " + e.Name + " 端口不合法：" + (port.Length == 0 ? "（空）" : port);
+                if (used.ContainsKey(p))
+                    return "服务 " + e.Name + " 端口 " + p + " 与 " + used[p] + " 重复";
+                used[p] = "服务 " + e.Name;
+            }
+            return "";
+        }
+
+        private bool DeployDirty()
+        {
+            DeployConfig disk = DeployConfig.Load(workDir);
+            foreach (string key in DeployConfig.Keys)
+            {
+                TextBox box = deployBoxes[key];
+                if (box.Text.Trim() != disk.Get(key).Trim()) return true;
+            }
+            return false;
+        }
+
+        private bool AppsDirty()
+        {
+            AppsConfig disk = AppsConfig.Load(workDir);
+            List<AppEntry> ui = CollectApps().Items;
+            if (ui.Count != disk.Items.Count) return true;
+            for (int i = 0; i < ui.Count; i++)
+            {
+                AppEntry a = ui[i];
+                AppEntry b = disk.Items[i];
+                if (a.Name != b.Name || a.Jar != b.Jar || a.Port != b.Port || a.Jdk != b.Jdk ||
+                    a.Jvm != b.Jvm || a.Extra != b.Extra || a.Host != b.Host) return true;
+            }
+            return false;
+        }
+
+        // 启停脚本读的是磁盘上的 conf，界面里未保存的修改不会生效，先提醒
+        private bool ConfirmUsingSavedConfig()
+        {
+            if (!DeployDirty() && !AppsDirty()) return true;
+            return MessageBox.Show("部署参数 / 服务清单有未保存的修改，本次操作将使用已保存的配置。\r\n建议先点“保存参数 / 保存清单”。\r\n\r\n仍要继续执行？",
+                "未保存的配置", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes;
+        }
+
         private List<YmlRow> CollectYmlRows()
         {
             List<YmlRow> rows = new List<YmlRow>();
@@ -2621,18 +2686,11 @@ namespace BatAppSetup
             if (currentNacos != null)
             {
                 dgvYml.EndEdit();
-                foreach (DataGridViewRow row in dgvYml.Rows)
-                {
-                    YmlRow r = row.Tag as YmlRow;
-                    if (r != null && r.IsNew && Cell(row, "key").Length == 0)
-                    {
-                        MessageBox.Show("新增属性必须填写属性名");
-                        return false;
-                    }
-                }
+                if (!ValidateYmlKeys()) return false;
                 string text = YmlEditor.BuildText(currentNacos.Content, CollectAllYmlRows(), out count);
                 currentNacos.Content = text;
                 deletedYmlRows.Clear();
+                ymlDirty = false;
                 ShowNacosConfig(currentNacos);
                 return true;
             }
@@ -2644,6 +2702,7 @@ namespace BatAppSetup
                 {
                     File.WriteAllText(f, txtCfgFile.Text, new UTF8Encoding(false));
                     count = 1;
+                    ymlDirty = false;
                     return true;
                 }
                 catch (Exception ex)
@@ -2653,18 +2712,28 @@ namespace BatAppSetup
                 }
             }
             dgvYml.EndEdit();
+            if (!ValidateYmlKeys()) return false;
+            count = YmlEditor.Save(workDir, CollectAllYmlRows());
+            deletedYmlRows.Clear();
+            ymlDirty = false;
+            ShowConfigFile(currentCfgRel);
+            return true;
+        }
+
+        // 属性名清空后 BuildText 会拼出 ": value" 这种坏行，所有行（不只新增行）都要校验
+        private bool ValidateYmlKeys()
+        {
             foreach (DataGridViewRow row in dgvYml.Rows)
             {
                 YmlRow r = row.Tag as YmlRow;
-                if (r != null && r.IsNew && Cell(row, "key").Length == 0)
+                if (r == null) continue;
+                if (Cell(row, "key").Length == 0)
                 {
-                    MessageBox.Show("新增属性必须填写属性名");
+                    MessageBox.Show("属性名不能为空（第 " + (row.Index + 1) + " 行）", "无法保存");
+                    dgvYml.CurrentCell = row.Cells["key"];
                     return false;
                 }
             }
-            count = YmlEditor.Save(workDir, CollectAllYmlRows());
-            deletedYmlRows.Clear();
-            ShowConfigFile(currentCfgRel);
             return true;
         }
 
@@ -2683,8 +2752,8 @@ namespace BatAppSetup
             if (!online)
             {
                 full = Path.IsPathRooted(currentCfgRel) ? currentCfgRel : Path.Combine(workDir, currentCfgRel);
-                string nacosDir = Path.GetFullPath(Path.Combine(workDir, @"conf\nacos"));
-                if (!Path.GetFullPath(full).StartsWith(nacosDir, StringComparison.OrdinalIgnoreCase))
+                string nacosDir = Path.GetFullPath(Path.Combine(workDir, @"conf\nacos")).TrimEnd('\\') + "\\";
+                if (!Path.GetFullPath(full).TrimEnd('\\').StartsWith(nacosDir, StringComparison.OrdinalIgnoreCase))
                 {
                     MessageBox.Show("本地文件只有 conf\\nacos 下的配置才能写回 Nacos；在线配置请先用“读取”加载。");
                     return;
@@ -2782,12 +2851,12 @@ namespace BatAppSetup
                 }
                 finally
                 {
-                    BeginInvoke(new Action(delegate()
+                    SafeBeginInvoke(delegate()
                     {
                         running = false;
                         SetRunButtons(true);
                         MessageBox.Show(msg);
-                    }));
+                    });
                 }
             });
             th.IsBackground = true;
@@ -2800,11 +2869,24 @@ namespace BatAppSetup
             if (running) { MessageBox.Show("有任务正在执行，请稍候"); return; }
             string target = txtTarget.Text.Trim();
             if (target.Length == 0) { MessageBox.Show("请选择安装目录"); return; }
-            if (target.IndexOf(' ') >= 0) { MessageBox.Show("安装路径不能包含空格"); return; }
+            if (target.IndexOfAny(new char[] { ' ', '%', '!', '^', '&', '"', '|' }) >= 0)
+            {
+                MessageBox.Show("安装路径不能包含空格或 % ! ^ & \" | 字符");
+                return;
+            }
             try { target = Path.GetFullPath(target).TrimEnd('\\'); }
             catch { MessageBox.Show("安装路径不合法"); return; }
 
             string src = PathHelper.Root;
+            string srcFull;
+            try { srcFull = Path.GetFullPath(src).TrimEnd('\\'); }
+            catch { srcFull = src; }
+            if (!string.Equals(target, srcFull, StringComparison.OrdinalIgnoreCase) &&
+                target.StartsWith(srcFull + "\\", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show("安装目录不能位于当前目录内部，请选择其他路径");
+                return;
+            }
             if (!Directory.Exists(Path.Combine(src, "runtime")) ||
                 !Directory.Exists(Path.Combine(src, "infra")))
             {
@@ -2814,8 +2896,15 @@ namespace BatAppSetup
 
             DeployConfig dc = CollectDeploy();
             AppsConfig ac = CollectApps();
+            string bad = ValidateConfigNumbers(dc, ac);
+            if (bad.Length > 0)
+            {
+                MessageBox.Show(bad, "配置有误");
+                return;
+            }
             dgvYml.EndEdit();
-            List<YmlRow> yr = CollectAllYmlRows();
+            // dgvYml 此时可能是 Nacos 在线配置（FilePath = dataId），不能当本地文件写进目标目录
+            List<YmlRow> yr = currentNacos != null ? new List<YmlRow>() : CollectAllYmlRows();
             for (int i = 0; i < yr.Count; i++)
             {
                 if (yr[i].RelPath.Length > 0 && !Path.IsPathRooted(yr[i].RelPath))
@@ -2826,19 +2915,56 @@ namespace BatAppSetup
 
             running = true;
             SetRunButtons(false);
-            txtInstallLog.Clear();
+            ClearLog(txtInstallLog);
             Thread th = new Thread(delegate()
             {
                 try
                 {
                     InstallLog("源目录  : " + src);
                     InstallLog("目标目录: " + target);
-                    if (string.Equals(Path.GetFullPath(src).TrimEnd('\\'), target, StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(srcFull, target, StringComparison.OrdinalIgnoreCase))
                     {
                         InstallLog("目标目录就是当前目录，跳过文件复制");
                     }
                     else
                     {
+                        if (File.Exists(PathHelper.DeployPath(target)))
+                        {
+                            HashSet<int> listening = GetListeningPorts();
+                            List<string> busy = new List<string>();
+                            string[] infraPorts = new string[] { "MYSQL_PORT", "PG_PORT", "REDIS_PORT",
+                                "MINIO_PORT", "MQ_NAMESRV_PORT", "MQ_BROKER_PORT", "NACOS_PORT",
+                                "GEOSERVER_PORT", "NGINX_PORT" };
+                            DeployConfig oldDc = DeployConfig.Load(target);
+                            foreach (string key in infraPorts)
+                            {
+                                int p;
+                                if (int.TryParse(oldDc.Get(key), out p) && listening.Contains(p))
+                                    busy.Add(key + "=" + p);
+                            }
+                            AppsConfig oldAc = AppsConfig.Load(target);
+                            foreach (AppEntry e in oldAc.Items)
+                            {
+                                int p;
+                                if (int.TryParse(e.Port, out p) && listening.Contains(p))
+                                    busy.Add(e.Name + "=" + p);
+                            }
+                            if (busy.Count > 0)
+                            {
+                                InstallLog("目标目录已有部署正在运行: " + string.Join(", ", busy.ToArray()));
+                                InstallLog("请先执行 " + Path.Combine(target, "stop-all.bat") + " 后重新安装");
+                                SafeBeginInvoke(delegate()
+                                {
+                                    running = false;
+                                    SetRunButtons(true);
+                                    MessageBox.Show("目标目录已有服务在运行，请先停止后再安装。");
+                                });
+                                return;
+                            }
+                            string bak = Path.Combine(target, "conf.bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+                            FileOps.CopyDir(PathHelper.ConfDir(target), bak, InstallLog);
+                            InstallLog("已备份原配置: " + bak);
+                        }
                         FileOps.CopyPayload(src, target, InstallLog);
                     }
                     dc.Save(target);
@@ -2850,29 +2976,40 @@ namespace BatAppSetup
                         try { CreateShortcuts(target); InstallLog("桌面快捷方式已创建"); }
                         catch (Exception ex) { InstallLog("快捷方式失败: " + ex.Message); }
                     }
+                    int initRc = 0;
                     if (doInit)
                     {
                         InstallLog("开始初始化数据目录 ...");
-                        RunProcess(@"bin\0-init.bat", target, InstallLog);
+                        initRc = RunProcess(@"bin\0-init.bat", target, InstallLog);
+                        if (initRc != 0)
+                            InstallLog("FAIL 初始化数据失败（退出码 " + initRc + "），请查看上方日志");
                     }
-                    BeginInvoke(new Action(delegate()
+                    SafeBeginInvoke(delegate()
                     {
                         workDir = target;
                         running = false;
                         SetRunButtons(true);
+                        ymlDirty = false;
+                        lastCfgIndex = -1;
                         ReloadAll();
-                        InstallLog("安装完成");
-                    }));
+                        InstallLog(initRc != 0 ? "安装完成，但初始化数据失败" : "安装完成");
+                        if (initRc != 0 && lblStatus != null)
+                        {
+                            lblStatus.Text = "●  有失败";
+                            statusColor = Color.FromArgb(248, 113, 113);
+                            lblStatus.ForeColor = statusColor;
+                        }
+                    });
                 }
                 catch (Exception ex)
                 {
-                    BeginInvoke(new Action(delegate()
+                    SafeBeginInvoke(delegate()
                     {
                         running = false;
                         SetRunButtons(true);
                         InstallLog("安装失败: " + ex.Message);
                         MessageBox.Show("安装失败: " + ex.Message);
-                    }));
+                    });
                 }
             });
             th.IsBackground = true;
@@ -2905,45 +3042,80 @@ namespace BatAppSetup
         }
 
         // ---------------- run ----------------
-        private void RunScripts(string[] scripts)
+        // 统一的“后台执行 + 按钮/光标恢复 + 失败提示”模板
+        private void RunTask(string title, Func<int> work, Action uiDone)
         {
             if (running) { MessageBox.Show("有任务正在执行，请稍候"); return; }
             running = true;
             SetRunButtons(false);
-            txtRunLog.Clear();
+            ClearLog(txtRunLog);
             ShowPage(5);
             Thread th = new Thread(delegate()
             {
-                try
-                {
-                    foreach (string s in scripts)
-                    {
-                        RunLog("");
-                        RunLog(">>> " + s);
-                        RunProcess(s, workDir, RunLog);
-                    }
-                }
+                int rc = 0;
+                try { rc = work(); }
                 catch (Exception ex)
                 {
+                    rc = 1;
                     RunLog("执行异常: " + ex.Message);
                 }
                 finally
                 {
-                    BeginInvoke(new Action(delegate()
+                    SafeBeginInvoke(delegate()
                     {
                         running = false;
                         SetRunButtons(true);
+                        if (uiDone != null) uiDone();
+                        if (rc != 0)
+                        {
+                            RunLog(title + " 失败，详见上方日志");
+                            if (lblStatus != null)
+                            {
+                                lblStatus.Text = "●  有失败";
+                                statusColor = Color.FromArgb(248, 113, 113);
+                                lblStatus.ForeColor = statusColor;
+                            }
+                        }
                         RunLog("任务结束");
-                    }));
+                    });
                 }
             });
             th.IsBackground = true;
             th.Start();
         }
 
-        private static void RunProcess(string rel, string dir, Action<string> log)
+        // 窗口关闭后 BeginInvoke 会抛异常；后台线程的 finally 必须走这里
+        private void SafeBeginInvoke(Action action)
         {
-            RunProcessArgs(rel, "auto", dir, log);
+            try
+            {
+                if (IsHandleCreated && !IsDisposed) BeginInvoke(action);
+            }
+            catch { }
+        }
+
+        private void RunScripts(string[] scripts)
+        {
+            if (!ConfirmUsingSavedConfig()) return;
+            RunTask("执行脚本", delegate()
+            {
+                foreach (string s in scripts)
+                {
+                    RunLog("");
+                    RunLog(">>> " + s);
+                    if (RunProcess(s, workDir, RunLog) != 0)
+                    {
+                        RunLog("脚本执行失败，已停止后续脚本: " + s);
+                        return 1;
+                    }
+                }
+                return 0;
+            }, null);
+        }
+
+        private static int RunProcess(string rel, string dir, Action<string> log)
+        {
+            return RunProcessArgs(rel, "auto", dir, log);
         }
 
         private static int RunProcessArgs(string rel, string extraArgs, string dir, Action<string> log)
@@ -3002,12 +3174,29 @@ namespace BatAppSetup
         {
             public List<string> Lines = new List<string>();
             public bool Scheduled;
+            public int LineCount;   // 已写入控件的行数，避免每次刷写都用 r.Lines.Length 全量统计
         }
 
         private static readonly object LogSync = new object();
         private static readonly Dictionary<RichTextBox, LogQueue> LogQueues =
             new Dictionary<RichTextBox, LogQueue>();
         private const int MaxLogLines = 5000;
+        private const int LogTrimSlack = 300;
+
+        private static void ClearLog(RichTextBox r)
+        {
+            lock (LogSync)
+            {
+                LogQueue q;
+                if (LogQueues.TryGetValue(r, out q))
+                {
+                    q.Lines.Clear();
+                    q.LineCount = 0;
+                    q.Scheduled = false;
+                }
+            }
+            r.Clear();
+        }
 
         private static void Append(RichTextBox r, string s)
         {
@@ -3034,15 +3223,20 @@ namespace BatAppSetup
         private static void FlushLog(RichTextBox r)
         {
             List<string> batch;
+            LogQueue q;
             lock (LogSync)
             {
-                LogQueue q = LogQueues[r];
+                q = LogQueues[r];
                 batch = q.Lines;
                 q.Lines = new List<string>();
                 q.Scheduled = false;
             }
             if (r.IsDisposed || batch.Count == 0) return;
 
+            bool stick = IsLogAtBottom(r);      // 用户往上翻看时不抢滚动条
+            int anchor = stick ? -1 : FirstVisibleChar(r);
+            int oldSelStart = r.SelectionStart;
+            int oldSelLen = r.SelectionLength;
             r.SelectionStart = r.TextLength;
             r.SelectionLength = 0;
             int current = -1;
@@ -3068,10 +3262,54 @@ namespace BatAppSetup
                 r.AppendText(sb.ToString());
             }
             r.SelectionColor = Color.FromArgb(209, 230, 245);
-            TrimLog(r);
-            r.SelectionStart = r.TextLength;
-            r.SelectionLength = 0;
-            r.ScrollToCaret();
+            lock (LogSync) { q.LineCount += batch.Count; }
+            int cut = TrimLog(r, q);
+            if (cut > 0)
+            {
+                if (anchor > 0) anchor = Math.Max(1, anchor - cut);
+                oldSelStart = Math.Max(0, oldSelStart - cut);
+            }
+            if (stick)
+            {
+                r.SelectionStart = r.TextLength;
+                r.SelectionLength = 0;
+                r.ScrollToCaret();
+            }
+            else
+            {
+                // AppendText 会把视图带到末尾：把追加前底部可见的位置滚回去
+                if (anchor > 0 && anchor < r.TextLength)
+                {
+                    r.SelectionStart = anchor;
+                    r.SelectionLength = 0;
+                    r.ScrollToCaret();
+                }
+                if (oldSelStart > r.TextLength) oldSelStart = r.TextLength;
+                if (oldSelStart + oldSelLen > r.TextLength) oldSelLen = r.TextLength - oldSelStart;
+                r.Select(oldSelStart, oldSelLen);
+            }
+        }
+
+        private static bool IsLogAtBottom(RichTextBox r)
+        {
+            if (r.TextLength == 0) return true;
+            try
+            {
+                Point p = r.GetPositionFromCharIndex(r.TextLength - 1);
+                return p.Y >= 0 && p.Y < r.ClientSize.Height;
+            }
+            catch { return true; }
+        }
+
+        private static int FirstVisibleChar(RichTextBox r)
+        {
+            try
+            {
+                int h = r.ClientSize.Height;
+                if (h <= 2) return -1;
+                return r.GetCharIndexFromPosition(new Point(2, h - 2));
+            }
+            catch { return -1; }
         }
 
         private static int LogKind(string s)
@@ -3090,14 +3328,27 @@ namespace BatAppSetup
             return Color.FromArgb(209, 230, 245);
         }
 
-        private static void TrimLog(RichTextBox r)
+        // 只读 RichTextBox 上 SelectedText 赋值是空操作，裁剪前要临时关掉 ReadOnly；返回删掉的字符数
+        private static int TrimLog(RichTextBox r, LogQueue q)
         {
-            if (r.Lines.Length <= MaxLogLines) return;
-            int remove = r.Lines.Length - MaxLogLines;
+            int count;
+            lock (LogSync) count = q.LineCount;
+            if (count <= MaxLogLines + LogTrimSlack) return 0;
+            int remove = count - MaxLogLines;
             int index = r.GetFirstCharIndexFromLine(remove);
-            if (index <= 0) return;
-            r.Select(0, index);
-            r.SelectedText = "";
+            if (index <= 0) return 0;
+            r.ReadOnly = false;
+            try
+            {
+                r.Select(0, index);
+                r.SelectedText = "";
+            }
+            finally
+            {
+                r.ReadOnly = true;
+            }
+            lock (LogSync) q.LineCount = count - remove;
+            return index;
         }
     }
 }

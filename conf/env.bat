@@ -41,7 +41,8 @@ if not defined GEOSERVER_PORT set "GEOSERVER_PORT=8080"
 if not defined NGINX_PORT set "NGINX_PORT=80"
 
 rem ---------- MinIO storage dir (blank = data\minio, relative resolved to APP_HOME) ----------
-set "MINIO_DATA_DIR=%MINIO_DATA_DIR:"=%"
+rem guard the substitution: when the key is blank, %VAR:"=% would produce garbage
+if defined MINIO_DATA_DIR set "MINIO_DATA_DIR=%MINIO_DATA_DIR:"=%"
 if not defined MINIO_DATA_DIR set "MINIO_DATA_DIR=%DATA_DIR%\minio"
 if "%MINIO_DATA_DIR:~1,1%"==":" goto :minio_dir_ready
 if "%MINIO_DATA_DIR:~0,2%"=="\\" goto :minio_dir_ready

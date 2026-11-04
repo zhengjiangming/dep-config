@@ -695,7 +695,8 @@ namespace BatAppSetup
 
     public static class FileOps
     {
-        private static readonly string[] SkipTopDirs = new string[] { "data", "logs", "release", "installer" };
+        // do not ship runtime data, build output or the git checkout into an install target
+        private static readonly string[] SkipTopDirs = new string[] { "data", "logs", "release", "installer", "nodes" };
 
         public static void CopyPayload(string src, string dst, Action<string> log)
         {
@@ -709,20 +710,31 @@ namespace BatAppSetup
             foreach (string f in Directory.GetFiles(src))
             {
                 string name = Path.GetFileName(f);
-                if (name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)) continue;
-                if (string.Equals(name, "setup_selftest.txt", StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsSkipFile(name)) continue;
                 File.Copy(f, Path.Combine(dst, name), true);
             }
         }
 
         private static bool IsSkipDir(string name)
         {
+            // .git / .vs / .trae 等隐藏目录不进入安装包
+            if (name.StartsWith(".", StringComparison.Ordinal)) return true;
             foreach (string s in SkipTopDirs)
                 if (name.Equals(s, StringComparison.OrdinalIgnoreCase)) return true;
             return false;
         }
 
-        private static void CopyDir(string s, string d, Action<string> log)
+        private static bool IsSkipFile(string name)
+        {
+            if (name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Equals("setup_selftest.txt", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Equals("setup_uittest.txt", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.StartsWith("setup_uicap", StringComparison.OrdinalIgnoreCase)) return true;
+            if (name.Equals("Setup_preview.exe", StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        public static void CopyDir(string s, string d, Action<string> log)
         {
             Directory.CreateDirectory(d);
             foreach (string f in Directory.GetFiles(s))

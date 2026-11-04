@@ -8,6 +8,8 @@ echo.
 echo ===== Start infrastructure (dependency order) =====
 echo   APP_HOME = %APP_HOME%
 echo   local: mysql=%START_MYSQL% pg=%START_PG% redis=%START_REDIS% minio=%START_MINIO% mq=%START_MQ% nacos=%START_NACOS% geoserver=%START_GEOSERVER% nginx=%START_NGINX%
+set "FAILED="
+set "FAILED_LIST="
 echo.
 
 rem ---------- 1. MySQL ----------
@@ -16,9 +18,11 @@ echo [1/9] MySQL ...
 if not exist "%DATA_DIR%\mysql" goto :NO_MYSQL
 start "mysql" /D "%MYSQL_HOME%\bin" /MIN cmd /c "mysqld.exe --defaults-file=%MYSQL_HOME%\my.ini >> %LOG_DIR%\mysql.log 2>&1"
 call :WAITPORT %PORT_MYSQL% 90 "MySQL"
+if errorlevel 1 call :MARKFAIL MySQL
 goto :PG
 :NO_MYSQL
 echo   [SKIP] MySQL not initialized, run bin\0-init.bat first
+call :MARKFAIL MySQL
 :PG
 
 rem ---------- 2. PostgreSQL ----------
@@ -27,9 +31,11 @@ echo [2/9] PostgreSQL ...
 if not exist "%DATA_DIR%\pg" goto :NO_PG
 "%PG_HOME%\bin\pg_ctl.exe" start -D "%DATA_DIR%\pg" -l "%LOG_DIR%\postgres.log" -w
 call :WAITPORT %PORT_PG% 60 "PostgreSQL"
+if errorlevel 1 call :MARKFAIL PostgreSQL
 goto :REDIS
 :NO_PG
 echo   [SKIP] PostgreSQL not initialized, run bin\0-init.bat first
+call :MARKFAIL PostgreSQL
 :REDIS
 
 rem ---------- 3. Redis ----------
@@ -37,6 +43,7 @@ if not "%START_REDIS%"=="1" goto :MINIO
 echo [3/9] Redis ...
 start "redis" /D "%REDIS_HOME%" /MIN cmd /c "redis-server.exe redis.windows.conf >> %LOG_DIR%\redis.log 2>&1"
 call :WAITPORT %PORT_REDIS% 30 "Redis"
+if errorlevel 1 call :MARKFAIL Redis
 
 rem ---------- 4. MinIO ----------
 :MINIO
@@ -48,6 +55,7 @@ set "MINIO_ACCESS_KEY=%MINIO_USER%"
 set "MINIO_SECRET_KEY=%MINIO_PWD%"
 start "minio" /D "%MINIO_HOME%" /MIN cmd /c "minio.exe server "%MINIO_DATA_DIR%" --address :%PORT_MINIO% --console-address :9001 >> %LOG_DIR%\minio.log 2>&1"
 call :WAITPORT %PORT_MINIO% 30 "MinIO"
+if errorlevel 1 call :MARKFAIL MinIO
 
 rem ---------- 5. RocketMQ NameServer ----------
 :MQ
@@ -55,11 +63,16 @@ if not "%START_MQ%"=="1" goto :NACOS
 echo [5/9] RocketMQ NameServer ...
 start "mqnamesrv" /D "%ROCKETMQ_HOME%\bin" /MIN cmd /c "mqnamesrv.cmd >> %LOG_DIR%\mqnamesrv.log 2>&1"
 call :WAITPORT %PORT_MQ_NAMESRV% 60 "RocketMQ NameServer"
+if errorlevel 1 (
+    call :MARKFAIL RocketMQ-NameServer
+    goto :NACOS
+)
 
 rem ---------- 6. RocketMQ Broker ----------
 echo [6/9] RocketMQ Broker ...
 start "mqbroker" /D "%ROCKETMQ_HOME%\bin" /MIN cmd /c "mqbroker.cmd -n %MQ_HOST%:%PORT_MQ_NAMESRV% -c %ROCKETMQ_HOME%\conf\broker.conf >> %LOG_DIR%\mqbroker.log 2>&1"
 call :WAITPORT %PORT_MQ_BROKER% 90 "RocketMQ Broker"
+if errorlevel 1 call :MARKFAIL RocketMQ-Broker
 
 rem ---------- 7. Nacos ----------
 :NACOS
@@ -78,6 +91,7 @@ set "JVM_XMS="
 set "JVM_XMX="
 set "JVM_XMN="
 call :WAITPORT %PORT_NACOS% 180 "Nacos"
+if errorlevel 1 call :MARKFAIL Nacos
 
 rem ---------- 8. GeoServer ----------
 :GEOSERVER
@@ -86,6 +100,7 @@ echo [8/9] GeoServer ...
 if not exist "%GEOSERVER_DATA_DIR%" mkdir "%GEOSERVER_DATA_DIR%"
 start "geoserver" /D "%GEOSERVER_HOME%\bin" /MIN cmd /c "startup.bat >> %LOG_DIR%\geoserver.log 2>&1"
 call :WAITPORT %PORT_GEOSERVER% 180 "GeoServer"
+if errorlevel 1 call :MARKFAIL GeoServer
 
 rem ---------- 9. Nginx ----------
 :NGINX
@@ -99,15 +114,30 @@ findstr /c:"${" "%NGINX_CONF%" >nul 2>&1
 if not errorlevel 1 echo   WARN nginx.conf still has ${...} placeholders, run Setup.exe - Nginx config - Inject variables
 start "nginx" /D "%NGINX_HOME%" /MIN cmd /c "nginx.exe -p %NGINX_HOME% -c %NGINX_CONF% >> %LOG_DIR%\nginx.log 2>&1"
 call :WAITPORT %PORT_NGINX% 30 "Nginx"
+if errorlevel 1 call :MARKFAIL Nginx
 goto :DONE
 :NO_NGINX
 echo   [SKIP] nginx not found: %NGINX_HOME%
+call :MARKFAIL Nginx
 :DONE
 
+if defined FAILED (
+    echo.
+    echo FAILED components:%FAILED_LIST%
+    echo Check logs in %LOG_DIR%
+    if /i not "%~1"=="auto" pause
+    exit /b 1
+)
 echo.
 echo Infrastructure started. Next: bin\3-start-apps.bat
 echo Logs: %LOG_DIR%
 if /i not "%~1"=="auto" pause
+exit /b 0
+
+rem ---------- mark a failed component and keep going ----------
+:MARKFAIL
+set "FAILED=1"
+set "FAILED_LIST=%FAILED_LIST% %~1"
 exit /b 0
 
 rem ---------- wait until port is listening ----------
