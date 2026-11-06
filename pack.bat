@@ -50,12 +50,18 @@ if "!JARS!"=="0" set "MISSING=!MISSING! apps\*.jar"
 if defined MISSING goto :MISS
 
 rem ---------- output name (locale independent) ----------
+set "STAMP="
+for /f "usebackq delims=" %%A in (`powershell -NoProfile -Command "Get-Date -Format yyyyMMdd"`) do set "STAMP=%%A"
+if defined STAMP echo !STAMP!| findstr /r "^[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]$" >nul
+if errorlevel 1 set "STAMP="
+if defined STAMP goto :STAMP_OK
 set "STAMP=%DATE%"
 set "STAMP=%STAMP:/=%"
 set "STAMP=%STAMP:-=%"
 set "STAMP=%STAMP:.=%"
 set "STAMP=%STAMP: =%"
 set "STAMP=%STAMP:~-8%"
+:STAMP_OK
 if not defined STAMP set "STAMP=%RANDOM%"
 if not exist "release" mkdir "release"
 set "OUT=release\bat_application_%STAMP%.zip"

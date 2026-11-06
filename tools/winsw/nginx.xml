@@ -1,0 +1,14 @@
+<service>
+  <id>nginx</id>
+  <name>nginx</name>
+  <description>bat_application Nginx reverse proxy</description>
+  <executable>D:\nginx-1.28.0\nginx.exe</executable>
+  <arguments>-p "D:\nginx-1.28.0" -c "D:\nginx-1.28.0\conf\nginx.run.conf"</arguments>
+  <workingdirectory>D:\nginx-1.28.0</workingdirectory>
+  <startmode>Automatic</startmode>
+  <logpath>D:\bao\bat_application\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+</service>

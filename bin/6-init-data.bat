@@ -57,6 +57,10 @@ if errorlevel 1 exit /b 1
 exit /b 0
 
 :MYSQL
+rem  delayed expansion off: a "!" in MYSQL_PWD must survive, and the db name is quoted
+setlocal DisableDelayedExpansion
+set "MP_DB=%DBNAME%"
+if defined MP_DB set "MP_DB="%DBNAME%""
 if not exist "%MYSQL_HOME%\bin\mysql.exe" (
     echo   FAIL mysql client not found: %MYSQL_HOME%\bin\mysql.exe
     exit /b 1
@@ -80,10 +84,10 @@ if not defined MPWD_OK (
 )
 echo   [MySQL] %SCRIPTNAME%  db=%DBNAME%
 if defined MPWD_OK (
-    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --password="%MYSQL_PWD%" --default-character-set=utf8mb4 %DBNAME% < "%SCRIPT%"
+    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --password="%MYSQL_PWD%" --default-character-set=utf8mb4 %MP_DB% < "%SCRIPT%"
 ) else (
-    echo   WARN MySQL root has no password yet, run bin\0-init.bat once to set MYSQL_PWD
-    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --default-character-set=utf8mb4 %DBNAME% < "%SCRIPT%"
+    echo   WARN MySQL root has no password yet, start infra once (bin\2-start-infra.bat) so MYSQL_PWD is applied
+    "%MYSQL_HOME%\bin\mysql.exe" --protocol=tcp --host=%MYSQL_HOST% --port=%MYSQL_PORT% --user=%MYSQL_USER% --default-character-set=utf8mb4 %MP_DB% < "%SCRIPT%"
 )
 if errorlevel 1 (
     echo   FAIL MySQL import failed: %SCRIPTNAME%
@@ -93,16 +97,19 @@ echo   OK   MySQL import done
 exit /b 0
 
 :PG
+rem  delayed expansion off: PG_PWD may contain "!", and the db name is quoted
+setlocal DisableDelayedExpansion
 if not exist "%PG_HOME%\bin\psql.exe" (
     echo   FAIL postgres client not found: %PG_HOME%\bin\psql.exe
     exit /b 1
 )
 set "PGDB=%DBNAME%"
 if not defined PGDB set "PGDB=postgres"
+set "PGDB_ARG="%PGDB%""
 set "PGPASSWORD=%PG_PWD%"
 set "PGCLIENTENCODING=UTF8"
 echo   [PostgreSQL] %SCRIPTNAME%  db=%PGDB%
-"%PG_HOME%\bin\psql.exe" -h %PG_HOST% -p %PG_PORT% -U %PG_USER% -d %PGDB% -v ON_ERROR_STOP=1 -f "%SCRIPT%"
+"%PG_HOME%\bin\psql.exe" -h %PG_HOST% -p %PG_PORT% -U %PG_USER% -d %PGDB_ARG% -v ON_ERROR_STOP=1 -f "%SCRIPT%"
 if errorlevel 1 (
     echo   FAIL PostgreSQL import failed: %SCRIPTNAME%
     exit /b 1

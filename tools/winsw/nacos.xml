@@ -1,0 +1,16 @@
+<service>
+  <id>nacos</id>
+  <name>nacos</name>
+  <description>bat_application Nacos registry, standalone mode</description>
+  <executable>cmd.exe</executable>
+  <arguments>/c startup.cmd -m standalone</arguments>
+  <workingdirectory>D:\nacos-server-2.3.0\nacos\bin</workingdirectory>
+  <env name="NACOS_HOME" value="D:\nacos-server-2.3.0\nacos"/>
+  <env name="JAVA_HOME" value="C:\Users\1\.jdks\graalvm-ce-17.0.9"/>
+  <startmode>Automatic</startmode>
+  <logpath>D:\bao\bat_application\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+</service>

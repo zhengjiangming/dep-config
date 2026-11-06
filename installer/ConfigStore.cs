@@ -21,38 +21,205 @@ namespace BatAppSetup
         }
         public static string ConfDir(string dir) { return Path.Combine(dir, "conf"); }
         public static string DeployPath(string dir) { return Path.Combine(ConfDir(dir), "deploy.properties"); }
+        public static string DefaultsPath(string dir) { return Path.Combine(ConfDir(dir), "deploy-defaults.properties"); }
+        public static string ComponentsPath(string dir) { return Path.Combine(ConfDir(dir), "components.properties"); }
+        public static string InstallStepsPath(string dir) { return Path.Combine(ConfDir(dir), "install-steps.cfg"); }
         public static string AppsPath(string dir) { return Path.Combine(ConfDir(dir), "apps.cfg"); }
         public static string ServiceHostsPath(string dir) { return Path.Combine(ConfDir(dir), "service-hosts.cfg"); }
         public static string NginxPath(string dir) { return Path.Combine(ConfDir(dir), @"nginx\nginx.conf"); }
     }
 
+    public class KeyGroup
+    {
+        public string Title;
+        public string[] Keys;
+        public KeyGroup(string title, string[] keys) { Title = title; Keys = keys; }
+    }
+
     public class DeployConfig
     {
-        public static readonly string[] Keys = new string[]
+        // 界面分组，同时决定 deploy.properties 的写入顺序
+        public static readonly KeyGroup[] Groups = new KeyGroup[]
         {
-            "DEPLOY_HOST", "INFRA_JDK",
-            "MYSQL_PORT", "MYSQL_USER", "MYSQL_PWD",
-            "PG_PORT", "PG_USER", "PG_PWD",
-            "REDIS_PORT", "REDIS_PWD",
-            "MINIO_PORT", "MINIO_USER", "MINIO_PWD", "MINIO_DATA_DIR",
-            "MQ_NAMESRV_PORT", "MQ_BROKER_PORT",
-            "NACOS_PORT", "NACOS_NAMESPACE", "NACOS_GROUP", "NACOS_PROFILE", "NACOS_USER", "NACOS_PWD",
-            "GEOSERVER_PORT", "NGINX_PORT",
-            "MYSQL_HOST", "PG_HOST", "REDIS_HOST", "MINIO_HOST", "MQ_HOST",
-            "NACOS_HOST", "GEOSERVER_HOST", "NGINX_HOST",
-            "START_MYSQL", "START_PG", "START_REDIS", "START_MINIO", "START_MQ",
-            "START_NACOS", "START_GEOSERVER", "START_NGINX"
+            new KeyGroup("基础", new string[] { "DEPLOY_HOST", "INFRA_JDK" }),
+            new KeyGroup("端口", new string[] { "MYSQL_PORT", "PG_PORT", "REDIS_PORT",
+                "MINIO_PORT", "MINIO_CONSOLE_PORT", "MQ_NAMESRV_PORT", "MQ_BROKER_PORT", "MQ_HA_PORT",
+                "NACOS_PORT", "GEOSERVER_PORT", "NGINX_PORT" }),
+            new KeyGroup("账号密码", new string[] { "MYSQL_USER", "MYSQL_PWD", "PG_USER", "PG_PWD",
+                "REDIS_PWD", "MINIO_USER", "MINIO_PWD", "NACOS_USER", "NACOS_PWD" }),
+            new KeyGroup("Nacos 命名", new string[] { "NACOS_NAMESPACE", "NACOS_GROUP", "NACOS_PROFILE" }),
+            new KeyGroup("组件主机（空 = DEPLOY_HOST）", new string[] { "MYSQL_HOST", "PG_HOST",
+                "REDIS_HOST", "MINIO_HOST", "MQ_HOST", "NACOS_HOST", "GEOSERVER_HOST", "NGINX_HOST" }),
+            new KeyGroup("本机启动开关（1 本机 / 0 远程）", new string[] { "START_MYSQL", "START_PG",
+                "START_REDIS", "START_MINIO", "START_MQ", "START_NACOS", "START_GEOSERVER", "START_NGINX" }),
+            new KeyGroup("数据目录（空 = 安装目录\\data）", new string[] { "DATA_DIR", "LOG_DIR",
+                "MYSQL_DATA_DIR", "PG_DATA_DIR", "MQ_DATA_DIR", "MINIO_DATA_DIR", "GEOSERVER_DATA_DIR",
+                "NODE_OUT_DIR" }),
+            new KeyGroup("配置文件（空 = 组件自带路径）", new string[] { "MYSQL_CNF", "REDIS_CNF",
+                "MQ_BROKER_CNF", "NGINX_CONF", "NACOS_CONF_DIR",
+                "CURL_EXE", "VCREDIST_EXE", "POWERSHELL_EXE", "FIREWALL_RULE_NAME" }),
+            new KeyGroup("等待超时（秒）", new string[] { "WAIT_MYSQL_SEC", "WAIT_PG_SEC", "WAIT_REDIS_SEC",
+                "WAIT_MINIO_SEC", "WAIT_MQ_NS_SEC", "WAIT_MQ_BROKER_SEC", "WAIT_NACOS_SEC",
+                "WAIT_GEOSERVER_SEC", "WAIT_NGINX_SEC", "WAIT_APP_SEC", "WAIT_NACOS_HTTP_SEC",
+                "HTTP_TIMEOUT_SEC", "IMPORT_TIMEOUT_SEC", "SCRIPT_TIMEOUT_SEC" }),
+            new KeyGroup("JVM", new string[] { "JVM_BASE", "JDK17_OPENS", "NACOS_JVM_XMS", "NACOS_JVM_XMX",
+                "NACOS_JVM_XMN", "NACOS_JAVA_TOOL_OPTIONS", "NACOS_EXTRA_OPTS" }),
+            new KeyGroup("运行", new string[] { "KILL_PROC_LIST" })
         };
 
+        // 界面在键名后面显示的中文说明，避免只看英文键名看不懂
+        private static readonly Dictionary<string, string> Hints = BuildHints();
+        private static Dictionary<string, string> BuildHints()
+        {
+            Dictionary<string, string> d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            d["DEPLOY_HOST"] = "部署主机 IP 或域名";
+            d["INFRA_JDK"] = "基础设施 JDK 版本（17/21）";
+            d["MYSQL_PORT"] = "MySQL 端口";
+            d["PG_PORT"] = "PostgreSQL 端口";
+            d["REDIS_PORT"] = "Redis 端口";
+            d["MINIO_PORT"] = "MinIO 服务端口";
+            d["MINIO_CONSOLE_PORT"] = "MinIO 控制台端口";
+            d["MQ_NAMESRV_PORT"] = "RocketMQ NameServer 端口";
+            d["MQ_BROKER_PORT"] = "RocketMQ Broker 端口";
+            d["MQ_HA_PORT"] = "RocketMQ 主从同步端口";
+            d["NACOS_PORT"] = "Nacos 端口";
+            d["GEOSERVER_PORT"] = "GeoServer 端口";
+            d["NGINX_PORT"] = "Nginx 端口";
+            d["MYSQL_USER"] = "MySQL 用户名";
+            d["MYSQL_PWD"] = "MySQL 密码";
+            d["PG_USER"] = "PostgreSQL 用户名";
+            d["PG_PWD"] = "PostgreSQL 密码";
+            d["REDIS_PWD"] = "Redis 密码（空 = 不启用认证）";
+            d["MINIO_USER"] = "MinIO 账号";
+            d["MINIO_PWD"] = "MinIO 密码";
+            d["NACOS_USER"] = "Nacos 用户名";
+            d["NACOS_PWD"] = "Nacos 密码";
+            d["NACOS_NAMESPACE"] = "Nacos 命名空间";
+            d["NACOS_GROUP"] = "Nacos 分组";
+            d["NACOS_PROFILE"] = "Nacos 环境标识";
+            d["MYSQL_HOST"] = "MySQL 主机";
+            d["PG_HOST"] = "PostgreSQL 主机";
+            d["REDIS_HOST"] = "Redis 主机";
+            d["MINIO_HOST"] = "MinIO 主机";
+            d["MQ_HOST"] = "RocketMQ 主机";
+            d["NACOS_HOST"] = "Nacos 主机";
+            d["GEOSERVER_HOST"] = "GeoServer 主机";
+            d["NGINX_HOST"] = "Nginx 主机";
+            d["START_MYSQL"] = "本机启动 MySQL";
+            d["START_PG"] = "本机启动 PostgreSQL";
+            d["START_REDIS"] = "本机启动 Redis";
+            d["START_MINIO"] = "本机启动 MinIO";
+            d["START_MQ"] = "本机启动 RocketMQ";
+            d["START_NACOS"] = "本机启动 Nacos";
+            d["START_GEOSERVER"] = "本机启动 GeoServer";
+            d["START_NGINX"] = "本机启动 Nginx";
+            d["DATA_DIR"] = "数据根目录";
+            d["LOG_DIR"] = "日志根目录";
+            d["MYSQL_DATA_DIR"] = "MySQL 数据目录";
+            d["PG_DATA_DIR"] = "PostgreSQL 数据目录";
+            d["MQ_DATA_DIR"] = "RocketMQ 数据目录";
+            d["MINIO_DATA_DIR"] = "MinIO 数据目录";
+            d["GEOSERVER_DATA_DIR"] = "GeoServer 数据目录";
+            d["NODE_OUT_DIR"] = "节点产物目录";
+            d["MYSQL_CNF"] = "MySQL 配置文件";
+            d["REDIS_CNF"] = "Redis 配置文件";
+            d["MQ_BROKER_CNF"] = "Broker 配置模板";
+            d["NGINX_CONF"] = "Nginx 配置模板";
+            d["NACOS_CONF_DIR"] = "Nacos 配置目录";
+            d["CURL_EXE"] = "curl.exe 路径";
+            d["VCREDIST_EXE"] = "VC++ 运行库安装包";
+            d["POWERSHELL_EXE"] = "PowerShell 路径";
+            d["FIREWALL_RULE_NAME"] = "防火墙规则名称";
+            d["WAIT_MYSQL_SEC"] = "等待 MySQL 启动（秒）";
+            d["WAIT_PG_SEC"] = "等待 PostgreSQL 启动（秒）";
+            d["WAIT_REDIS_SEC"] = "等待 Redis 启动（秒）";
+            d["WAIT_MINIO_SEC"] = "等待 MinIO 启动（秒）";
+            d["WAIT_MQ_NS_SEC"] = "等待 NameServer 启动（秒）";
+            d["WAIT_MQ_BROKER_SEC"] = "等待 Broker 启动（秒）";
+            d["WAIT_NACOS_SEC"] = "等待 Nacos 启动（秒）";
+            d["WAIT_GEOSERVER_SEC"] = "等待 GeoServer 启动（秒）";
+            d["WAIT_NGINX_SEC"] = "等待 Nginx 启动（秒）";
+            d["WAIT_APP_SEC"] = "等待微服务启动（秒）";
+            d["WAIT_NACOS_HTTP_SEC"] = "等待 Nacos HTTP 就绪（秒）";
+            d["HTTP_TIMEOUT_SEC"] = "HTTP 检查超时（秒）";
+            d["IMPORT_TIMEOUT_SEC"] = "导入配置超时（秒）";
+            d["SCRIPT_TIMEOUT_SEC"] = "安装脚本超时（秒，超时强制结束）";
+            d["JVM_BASE"] = "通用 JVM 参数";
+            d["JDK17_OPENS"] = "JDK17 模块开放参数";
+            d["NACOS_JVM_XMS"] = "Nacos 初始堆大小";
+            d["NACOS_JVM_XMX"] = "Nacos 最大堆大小";
+            d["NACOS_JVM_XMN"] = "Nacos 新生代大小";
+            d["NACOS_JAVA_TOOL_OPTIONS"] = "Nacos 工具参数";
+            d["NACOS_EXTRA_OPTS"] = "Nacos 其他参数";
+            d["KILL_PROC_LIST"] = "允许强制结束的进程名";
+            d["JDK17_HOME"] = "JDK17 目录";
+            d["JDK21_HOME"] = "JDK21 目录";
+            d["MYSQL_HOME"] = "MySQL 目录";
+            d["PG_HOME"] = "PostgreSQL 目录";
+            d["REDIS_HOME"] = "Redis 目录";
+            d["ROCKETMQ_HOME"] = "RocketMQ 目录";
+            d["MINIO_HOME"] = "MinIO 目录";
+            d["NACOS_HOME"] = "Nacos 目录";
+            d["GEOSERVER_HOME"] = "GeoServer 目录";
+            d["NGINX_HOME"] = "Nginx 目录";
+            d["APPS_DIR"] = "微服务 jar 目录";
+            d["ENGINE_JAR"] = "规则引擎 jar";
+            return d;
+        }
+
+        public static string Hint(string key)
+        {
+            return Hints.ContainsKey(key) ? Hints[key] : "";
+        }
+
+        public static readonly string[] Keys = FlattenKeys();
+
+        // 目录类参数：浏览按钮选择文件夹
+        public static readonly string[] DirKeys = new string[] { "DATA_DIR", "LOG_DIR", "MYSQL_DATA_DIR",
+            "PG_DATA_DIR", "MQ_DATA_DIR", "MINIO_DATA_DIR", "GEOSERVER_DATA_DIR", "NODE_OUT_DIR",
+            "NACOS_CONF_DIR" };
+
+        // 文件类参数：浏览按钮选择文件
+        public static readonly string[] FileKeys = new string[] { "MYSQL_CNF", "REDIS_CNF",
+            "MQ_BROKER_CNF", "NGINX_CONF",
+            "CURL_EXE", "VCREDIST_EXE", "POWERSHELL_EXE" };
+
+        private static string[] FlattenKeys()
+        {
+            List<string> list = new List<string>();
+            foreach (KeyGroup g in Groups)
+                foreach (string k in g.Keys) list.Add(k);
+            return list.ToArray();
+        }
+
+        private static readonly HashSet<string> KeySet = BuildKeySet();
+        private static HashSet<string> BuildKeySet()
+        {
+            HashSet<string> set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string k in Keys) set.Add(k);
+            return set;
+        }
+
         private Dictionary<string, string> map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private List<string> extras = new List<string>();
 
         public string Get(string key) { return map.ContainsKey(key) ? map[key] : ""; }
         public void Set(string key, string val) { map[key] = val == null ? "" : val; }
 
-        public static DeployConfig Load(string dir)
+        // 把文件里的自定义键（非界面可编辑项）原样带过去，避免保存时丢失
+        public void CopyExtrasFrom(DeployConfig src)
+        {
+            if (src == null) return;
+            foreach (string key in src.extras)
+            {
+                Set(key, src.Get(key));
+                if (!extras.Contains(key)) extras.Add(key);
+            }
+        }
+
+        private static DeployConfig LoadFile(string file)
         {
             DeployConfig cfg = new DeployConfig();
-            string file = PathHelper.DeployPath(dir);
             if (!File.Exists(file)) return cfg;
             foreach (string raw in File.ReadAllLines(file))
             {
@@ -60,19 +227,219 @@ namespace BatAppSetup
                 if (line.Length == 0 || line.StartsWith("#")) continue;
                 int i = line.IndexOf('=');
                 if (i <= 0) continue;
-                cfg.Set(line.Substring(0, i).Trim(), line.Substring(i + 1).Trim());
+                string key = line.Substring(0, i).Trim();
+                cfg.Set(key, line.Substring(i + 1).Trim());
+                if (!KeySet.Contains(key)) cfg.extras.Add(key);
             }
             return cfg;
         }
 
+        // 只读本机覆盖值（可能为空），用于比较磁盘上的实际配置
+        public static DeployConfig Load(string dir)
+        {
+            return LoadFile(PathHelper.DeployPath(dir));
+        }
+
+        // 默认值：conf\deploy-defaults.properties
+        public static DeployConfig LoadDefaults(string dir)
+        {
+            return LoadFile(PathHelper.DefaultsPath(dir));
+        }
+
+        // 界面显示用：默认值 + 本机覆盖（空值视为使用默认值）
+        public static DeployConfig LoadEffective(string dir)
+        {
+            DeployConfig cfg = LoadDefaults(dir);
+            DeployConfig dep = Load(dir);
+            foreach (KeyValuePair<string, string> kv in dep.map)
+            {
+                if (kv.Value.Trim().Length == 0) continue;
+                cfg.Set(kv.Key, kv.Value);
+            }
+            foreach (string k in dep.extras)
+                if (!cfg.extras.Contains(k)) cfg.extras.Add(k);
+            return cfg;
+        }
+
+        // 空值不写入文件：删除键即恢复 deploy-defaults.properties 中的默认值
         public void Save(string dir)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("# generated by Setup.exe " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-            foreach (string key in Keys) sb.AppendLine(key + "=" + Get(key));
+            sb.AppendLine("# blank value = use conf\\deploy-defaults.properties");
+            foreach (string key in Keys)
+            {
+                string v = Get(key).Trim();
+                if (v.Length > 0) sb.AppendLine(key + "=" + v);
+            }
+            foreach (string key in extras)
+            {
+                string v = Get(key).Trim();
+                if (v.Length > 0) sb.AppendLine(key + "=" + v);
+            }
             string file = PathHelper.DeployPath(dir);
+            FileOps.WriteAllTextAtomic(file, sb.ToString());
+        }
+    }
+
+    public class ComponentPath
+    {
+        public string Key;
+        public string Label;
+        public string Bundled;
+        public ComponentPath(string key, string label, string bundled)
+        {
+            Key = key;
+            Label = label;
+            Bundled = bundled;
+        }
+    }
+
+    public class ComponentsConfig
+    {
+        public static readonly ComponentPath[] Items = new ComponentPath[]
+        {
+            new ComponentPath("JDK17_HOME", "JDK 17", @"runtime\jdk17"),
+            new ComponentPath("JDK21_HOME", "JDK 21", @"runtime\jdk21"),
+            new ComponentPath("MYSQL_HOME", "MySQL", @"infra\mysql"),
+            new ComponentPath("PG_HOME", "PostgreSQL", @"infra\postgres"),
+            new ComponentPath("REDIS_HOME", "Redis", @"infra\redis"),
+            new ComponentPath("ROCKETMQ_HOME", "RocketMQ", @"infra\rocketmq"),
+            new ComponentPath("MINIO_HOME", "MinIO", @"infra\minio"),
+            new ComponentPath("NACOS_HOME", "Nacos", @"infra\nacos"),
+            new ComponentPath("GEOSERVER_HOME", "GeoServer", @"infra\geoserver"),
+            new ComponentPath("NGINX_HOME", "Nginx", @"infra\nginx"),
+            new ComponentPath("APPS_DIR", "服务 jar 目录（仅 assemble）", @"apps"),
+            new ComponentPath("ENGINE_JAR", "规则引擎 jar（仅 assemble）", @"qrule.jar")
+        };
+
+        private Dictionary<string, string> map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        public string Get(string key) { return map.ContainsKey(key) ? map[key] : ""; }
+        public void Set(string key, string val) { map[key] = val == null ? "" : val; }
+
+        // 路径以 \ 结尾时塞进 "..." 会转义掉收尾引号，统一去掉
+        public static string TrimSep(string v)
+        {
+            if (v.Length <= 3) return v;
+            return v.TrimEnd('\\', '/');
+        }
+
+        public static ComponentsConfig Load(string dir)
+        {
+            ComponentsConfig cfg = new ComponentsConfig();
+            string file = PathHelper.ComponentsPath(dir);
+            if (!File.Exists(file)) return cfg;
+            foreach (string raw in File.ReadAllLines(file))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#")) continue;
+                int i = line.IndexOf('=');
+                if (i <= 0) continue;
+                cfg.Set(line.Substring(0, i).Trim(), TrimSep(line.Substring(i + 1).Trim()));
+            }
+            return cfg;
+        }
+
+        // 保留原有注释和示例行，只替换已填写的键；空值表示使用内置目录
+        public void Save(string dir)
+        {
+            string file = PathHelper.ComponentsPath(dir);
+            List<string> outLines = new List<string>();
+            HashSet<string> written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (File.Exists(file))
+            {
+                foreach (string raw in File.ReadAllLines(file))
+                {
+                    string line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith("#"))
+                    {
+                        outLines.Add(raw);
+                        continue;
+                    }
+                    int i = line.IndexOf('=');
+                    if (i <= 0) { outLines.Add(raw); continue; }
+                    string key = line.Substring(0, i).Trim();
+                    if (!written.Contains(key) && KnownKey(key))
+                    {
+                        written.Add(key);
+                        string v = TrimSep(Get(key).Trim());
+                        if (v.Length == 0) continue;
+                        outLines.Add(key + "=" + v);
+                    }
+                    else
+                    {
+                        outLines.Add(raw);
+                    }
+                }
+            }
+            if (outLines.Count == 0)
+            {
+                outLines.Add("# =====================================================================");
+                outLines.Add("#  Component locations. Empty = bundled folder, spaces in paths are allowed.");
+                outLines.Add("# =====================================================================");
+            }
+            List<string> pending = new List<string>();
+            foreach (ComponentPath it in Items)
+                if (!written.Contains(it.Key) && Get(it.Key).Trim().Length > 0)
+                    pending.Add(it.Key + "=" + TrimSep(Get(it.Key).Trim()));
+            if (pending.Count > 0)
+            {
+                outLines.Add("");
+                outLines.Add("# ---------- set by Setup.exe ----------");
+                foreach (string l in pending) outLines.Add(l);
+            }
             Directory.CreateDirectory(Path.GetDirectoryName(file));
-            File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false));
+            FileOps.WriteAllTextAtomic(file, string.Join("\r\n", outLines.ToArray()) + "\r\n");
+        }
+
+        private static bool KnownKey(string key)
+        {
+            foreach (ComponentPath it in Items)
+                if (string.Equals(it.Key, key, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+    }
+
+    public class InstallStep
+    {
+        public string Name = "";
+        public string Script = "";
+        public bool Enabled = true;
+        public bool StopOnFail = true;
+        public string Description = "";
+
+        public override string ToString()
+        {
+            return Name + "   " + Script;
+        }
+    }
+
+    public static class InstallStepsConfig
+    {
+        // 名称|脚本|默认勾选(1/0)|失败即停止(1/0)|说明
+        public static List<InstallStep> Load(string dir)
+        {
+            List<InstallStep> list = new List<InstallStep>();
+            string file = PathHelper.InstallStepsPath(dir);
+            if (!File.Exists(file)) return list;
+            foreach (string raw in File.ReadAllLines(file))
+            {
+                string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith("#")) continue;
+                string[] p = line.Split('|');
+                if (p.Length < 2) continue;
+                InstallStep s = new InstallStep();
+                s.Name = p[0].Trim();
+                s.Script = p[1].Trim();
+                if (s.Script.Length == 0) continue;
+                s.Enabled = p.Length > 2 ? p[2].Trim() != "0" : true;
+                s.StopOnFail = p.Length > 3 ? p[3].Trim() != "0" : true;
+                s.Description = p.Length > 4 ? p[4].Trim() : "";
+                if (s.Name.Length == 0) s.Name = s.Script;
+                list.Add(s);
+            }
+            return list;
         }
     }
 
@@ -153,8 +520,8 @@ namespace BatAppSetup
                     hb.AppendLine(e.Name + "|" + e.Host.Trim());
 
             Directory.CreateDirectory(PathHelper.ConfDir(dir));
-            File.WriteAllText(PathHelper.AppsPath(dir), sb.ToString(), new UTF8Encoding(false));
-            File.WriteAllText(PathHelper.ServiceHostsPath(dir), hb.ToString(), new UTF8Encoding(false));
+            FileOps.WriteAllTextAtomic(PathHelper.AppsPath(dir), sb.ToString());
+            FileOps.WriteAllTextAtomic(PathHelper.ServiceHostsPath(dir), hb.ToString());
         }
     }
 
@@ -257,7 +624,7 @@ namespace BatAppSetup
                     sb.AppendLine(it.Path);
             }
             Directory.CreateDirectory(PathHelper.ConfDir(dir));
-            File.WriteAllText(FileOf(dir), sb.ToString(), new UTF8Encoding(false));
+            FileOps.WriteAllTextAtomic(FileOf(dir), sb.ToString());
         }
 
         public static void SaveName(string dir, string name)
@@ -434,8 +801,7 @@ namespace BatAppSetup
                 string srcText = File.Exists(f) ? File.ReadAllText(f) : "";
                 int c = 0;
                 string text = BuildText(srcText, byFile[f], out c);
-                Directory.CreateDirectory(Path.GetDirectoryName(f));
-                File.WriteAllText(f, text, new UTF8Encoding(false));
+                FileOps.WriteAllTextAtomic(f, text);
                 count += c;
             }
             return count;
@@ -500,6 +866,9 @@ namespace BatAppSetup
 
     public static class NacosApi
     {
+        // 由 Setup.exe 按 deploy.properties 的 IMPORT_TIMEOUT_SEC 设置
+        public static int HttpTimeoutMs = 15000;
+
         public static string BaseUrl(DeployConfig cfg)
         {
             string host = cfg.Get("NACOS_HOST");
@@ -605,8 +974,8 @@ namespace BatAppSetup
         {
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = "GET";
-            req.Timeout = 15000;
-            req.ReadWriteTimeout = 15000;
+            req.Timeout = HttpTimeoutMs;
+            req.ReadWriteTimeout = HttpTimeoutMs;
             try
             {
                 using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
@@ -627,7 +996,8 @@ namespace BatAppSetup
             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
             req.Method = "POST";
             req.ContentType = "application/x-www-form-urlencoded";
-            req.Timeout = 15000;
+            req.Timeout = HttpTimeoutMs;
+            req.ReadWriteTimeout = HttpTimeoutMs;
             byte[] data = Encoding.UTF8.GetBytes(body);
             req.ContentLength = data.Length;
             using (Stream s = req.GetRequestStream()) s.Write(data, 0, data.Length);
@@ -690,8 +1060,7 @@ namespace BatAppSetup
             foreach (NacosMetaEntry it in map.Values)
                 sb.AppendLine(it.FileName + "|" + it.DataId + "|" + it.Group + "|" + it.Tenant);
             string file = FileOf(dir);
-            Directory.CreateDirectory(Path.GetDirectoryName(file));
-            File.WriteAllText(file, sb.ToString(), new UTF8Encoding(false));
+            FileOps.WriteAllTextAtomic(file, sb.ToString());
         }
     }
 
@@ -699,6 +1068,27 @@ namespace BatAppSetup
     {
         // do not ship runtime data, build output or the git checkout into an install target
         private static readonly string[] SkipTopDirs = new string[] { "data", "logs", "release", "installer", "nodes" };
+
+        // 先写临时文件再原子替换，避免断电/异常时留下半截配置
+        public static void WriteAllTextAtomic(string file, string text)
+        {
+            if (file == null || file.Length == 0) return;
+            string dir = Path.GetDirectoryName(file);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            string tmp = file + ".tmp";
+            File.WriteAllText(tmp, text, new UTF8Encoding(false));
+            if (File.Exists(file))
+            {
+                try { File.Replace(tmp, file, null); }
+                catch (Exception)
+                {
+                    // FAT/网络盘不支持 Replace 时退化为复制替换
+                    File.Copy(tmp, file, true);
+                    File.Delete(tmp);
+                }
+            }
+            else File.Move(tmp, file);
+        }
 
         public static void CopyPayload(string src, string dst, Action<string> log)
         {
@@ -745,9 +1135,21 @@ namespace BatAppSetup
                 if (name.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)) continue;
                 if (name.Equals("deploy.properties", StringComparison.OrdinalIgnoreCase) &&
                     File.Exists(Path.Combine(d, name))) continue;
+                if (name.Equals("components.properties", StringComparison.OrdinalIgnoreCase) &&
+                    File.Exists(Path.Combine(d, name))) continue;
+                if (name.Equals("install-steps.cfg", StringComparison.OrdinalIgnoreCase) &&
+                    File.Exists(Path.Combine(d, name))) continue;
                 if (name.Equals("config-files.cfg", StringComparison.OrdinalIgnoreCase) &&
                     File.Exists(Path.Combine(d, name))) continue;
                 if (name.Equals("service-hosts.cfg", StringComparison.OrdinalIgnoreCase) &&
+                    File.Exists(Path.Combine(d, name))) continue;
+                // 服务清单也属于目标机配置，覆盖安装时保留
+                if (name.Equals("apps.cfg", StringComparison.OrdinalIgnoreCase) &&
+                    File.Exists(Path.Combine(d, name))) continue;
+                // 重装/升级时保留已配置的 Nacos 元数据与 nginx 占位符结果
+                if (name.Equals("nacos-meta.cfg", StringComparison.OrdinalIgnoreCase) &&
+                    File.Exists(Path.Combine(d, name))) continue;
+                if (name.Equals("nginx.conf", StringComparison.OrdinalIgnoreCase) &&
                     File.Exists(Path.Combine(d, name))) continue;
                 File.Copy(f, Path.Combine(d, name), true);
             }

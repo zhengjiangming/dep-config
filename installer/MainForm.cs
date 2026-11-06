@@ -19,10 +19,13 @@ namespace BatAppSetup
         private Label lblWorkDir;
         private Label lblStatus;
         private TextBox txtTarget;
-        private CheckBox chkInit;
+        private CheckedListBox lstInstallSteps;
+        private TableLayoutPanel installLayout;
         private CheckBox chkShortcut;
         private RichTextBox txtInstallLog;
         private Dictionary<string, TextBox> deployBoxes = new Dictionary<string, TextBox>();
+        private DeployConfig lastDeploy;
+        private Dictionary<string, TextBox> componentBoxes = new Dictionary<string, TextBox>();
         private DataGridView dgvApps;
         private DataGridView dgvYml;
         private RichTextBox txtCfgFile;
@@ -69,6 +72,7 @@ namespace BatAppSetup
             public bool Local;
             public bool IsApp;
             public string Key;
+            public string ExpectedImage;
         }
 
         private class ScriptItem
@@ -91,6 +95,7 @@ namespace BatAppSetup
         private Button btnSqlInit;
         private string workDir;
         private bool running;
+        private static int scriptTimeoutSec = 1800;
         private int currentPage = -1;
         private TechHeader header;
         private System.Windows.Forms.Timer fxTimer;
@@ -469,13 +474,16 @@ namespace BatAppSetup
             TableLayoutPanel t = new TableLayoutPanel();
             t.Dock = DockStyle.Fill;
             t.ColumnCount = 1;
-            t.RowCount = 4;
+            t.RowCount = 6;
             t.BackColor = Color.Transparent;
             t.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             t.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-            t.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+            t.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            t.RowStyles.Add(new RowStyle(SizeType.Absolute, 186));
+            t.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
             t.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             body.Controls.Add(t);
+            installLayout = t;
 
             Label l = new Label();
             l.Text = "安装目录（不能含空格，建议 D:\\bat_application）";
@@ -506,12 +514,63 @@ namespace BatAppSetup
             };
             pathRow.Controls.Add(browse);
 
+            // 高 DPI 下 TextBox 的实际高度会超过固定行高，按 PreferredHeight 计算这一行，
+            // 否则输入框和“浏览”按钮的底部会被 pathRow 裁掉几个像素
+            t.RowStyles[1].Height = Math.Max(40, txtTarget.PreferredHeight + 16);
+
+            // 两列布局：说明文字占满左侧，快捷方式固定右侧，避免文字和勾选框互相遮挡
+            TableLayoutPanel stepBar = new TableLayoutPanel();
+            stepBar.Dock = DockStyle.Fill;
+            stepBar.BackColor = Color.Transparent;
+            stepBar.ColumnCount = 2;
+            stepBar.RowCount = 1;
+            stepBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            stepBar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
+            t.Controls.Add(stepBar, 0, 2);
+
+            Label stepLbl = new Label();
+            stepLbl.Text = "安装后执行的步骤（conf\\install-steps.cfg 可增删步骤、调整默认勾选）";
+            stepLbl.Font = Theme.Small;
+            stepLbl.ForeColor = Theme.Muted;
+            stepLbl.AutoSize = false;
+            stepLbl.AutoEllipsis = true;
+            stepLbl.TextAlign = ContentAlignment.MiddleLeft;
+            stepLbl.Dock = DockStyle.Fill;
+            stepLbl.Margin = new Padding(0, 0, 10, 0);
+            stepBar.Controls.Add(stepLbl, 0, 0);
+
+            chkShortcut = new CheckBox();
+            chkShortcut.Text = "创建桌面快捷方式";
+            chkShortcut.ForeColor = Theme.Text;
+            chkShortcut.Font = Theme.Body;
+            chkShortcut.AutoSize = true;
+            chkShortcut.Anchor = AnchorStyles.Right;
+            chkShortcut.Margin = new Padding(0, 0, 0, 0);
+            chkShortcut.Checked = true;
+            stepBar.Controls.Add(chkShortcut, 1, 0);
+
+            Panel stepWrap = new Panel();
+            stepWrap.Dock = DockStyle.Fill;
+            stepWrap.BackColor = Theme.Border;
+            stepWrap.Padding = new Padding(1);
+            t.Controls.Add(stepWrap, 0, 3);
+
+            lstInstallSteps = new CheckedListBox();
+            lstInstallSteps.Dock = DockStyle.Fill;
+            lstInstallSteps.BorderStyle = BorderStyle.None;
+            lstInstallSteps.BackColor = Theme.Card;
+            lstInstallSteps.ForeColor = Theme.Text;
+            lstInstallSteps.Font = Theme.Body;
+            lstInstallSteps.CheckOnClick = true;
+            lstInstallSteps.IntegralHeight = false;
+            stepWrap.Controls.Add(lstInstallSteps);
+
             FlowLayoutPanel bar = new FlowLayoutPanel();
             bar.Dock = DockStyle.Fill;
             bar.BackColor = Color.Transparent;
             bar.Padding = new Padding(0, 6, 0, 0);
             bar.WrapContents = false;
-            t.Controls.Add(bar, 0, 2);
+            t.Controls.Add(bar, 0, 4);
 
             btnInstall = MakeButton("开始安装", true);
             btnInstall.Width = 140;
@@ -520,30 +579,20 @@ namespace BatAppSetup
             btnInstall.Click += delegate { OnInstall(); };
             bar.Controls.Add(btnInstall);
 
-            chkInit = new CheckBox();
-            chkInit.Text = "初始化 MySQL / PostgreSQL 数据目录";
-            chkInit.ForeColor = Theme.Text;
-            chkInit.Font = Theme.Body;
-            chkInit.AutoSize = true;
-            chkInit.Margin = new Padding(0, 15, 18, 0);
-            chkInit.Checked = true;
-            bar.Controls.Add(chkInit);
-
-            chkShortcut = new CheckBox();
-            chkShortcut.Text = "创建桌面快捷方式";
-            chkShortcut.ForeColor = Theme.Text;
-            chkShortcut.Font = Theme.Body;
-            chkShortcut.AutoSize = true;
-            chkShortcut.Margin = new Padding(0, 15, 0, 0);
-            chkShortcut.Checked = true;
-            bar.Controls.Add(chkShortcut);
+            Label stepHint = new Label();
+            stepHint.Text = "按文件顺序执行；标记为“失败即停止”的步骤失败后会中断后续步骤";
+            stepHint.Font = Theme.Small;
+            stepHint.ForeColor = Theme.Muted;
+            stepHint.AutoSize = true;
+            stepHint.Margin = new Padding(0, 12, 0, 0);
+            bar.Controls.Add(stepHint);
 
             Panel logWrap = new Panel();
             logWrap.Dock = DockStyle.Fill;
             logWrap.BackColor = Theme.Border;
             logWrap.Padding = new Padding(1);
             logWrap.Margin = new Padding(0, 6, 0, 0);
-            t.Controls.Add(logWrap, 0, 3);
+            t.Controls.Add(logWrap, 0, 5);
 
             txtInstallLog = new RichTextBox();
             txtInstallLog.Dock = DockStyle.Fill;
@@ -572,33 +621,85 @@ namespace BatAppSetup
             TableLayoutPanel t = new TableLayoutPanel();
             t.Dock = DockStyle.Top;
             t.ColumnCount = 4;
-            t.RowCount = (DeployConfig.Keys.Length + 1) / 2;
-            t.Height = t.RowCount * 36 + 8;
             t.BackColor = Color.Transparent;
-            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
+            // 标签列加宽，容纳“键名 + 中文说明”
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 310));
             t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
+            t.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 310));
             t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             scroll.Controls.Add(t);
 
-            for (int i = 0; i < DeployConfig.Keys.Length; i++)
+            // 分组标题 + 两列参数；先算行数，Dock Top 的表格才不会被裁掉
+            List<int> heights = new List<int>();
+            foreach (KeyGroup g in DeployConfig.Groups)
             {
-                string key = DeployConfig.Keys[i];
-                int row = i / 2;
-                int col = (i % 2) * 2;
-                Label lbl = new Label();
-                lbl.Text = key;
-                lbl.TextAlign = ContentAlignment.MiddleLeft;
-                lbl.Dock = DockStyle.Fill;
-                lbl.Font = new Font("Consolas", 9f);
-                lbl.ForeColor = Theme.Muted;
-                TextBox tb = new TextBox();
-                tb.Dock = DockStyle.Fill;
-                tb.Margin = new Padding(2, 6, 12, 6);
-                Theme.StyleInput(tb);
-                t.Controls.Add(lbl, col, row);
-                t.Controls.Add(tb, col + 1, row);
-                deployBoxes[key] = tb;
+                heights.Add(26);
+                int pairs = (g.Keys.Length + 1) / 2;
+                for (int i = 0; i < pairs; i++) heights.Add(46);
+            }
+            heights.Add(26);
+            int compPairs = (ComponentsConfig.Items.Length + 1) / 2;
+            for (int i = 0; i < compPairs; i++) heights.Add(46);
+
+            t.RowCount = heights.Count;
+            int total = 0;
+            foreach (int h in heights) total += h;
+            t.Height = total + 10;
+            foreach (int h in heights) t.RowStyles.Add(new RowStyle(SizeType.Absolute, h));
+
+            int row = 0;
+            foreach (KeyGroup group in DeployConfig.Groups)
+            {
+                AddGroupHeader(t, group.Title, row);
+                row++;
+                int pairs = (group.Keys.Length + 1) / 2;
+                for (int p = 0; p < pairs; p++)
+                {
+                    for (int slot = 0; slot < 2; slot++)
+                    {
+                        int idx = p * 2 + slot;
+                        if (idx >= group.Keys.Length) continue;
+                        string key = group.Keys[idx];
+                        int col = slot * 2;
+                        Label lbl = new Label();
+                        string hint = DeployConfig.Hint(key);
+                        lbl.Text = hint.Length > 0 ? key + "\n" + hint : key;
+                        lbl.TextAlign = ContentAlignment.MiddleLeft;
+                        lbl.Dock = DockStyle.Fill;
+                        lbl.AutoSize = false;
+                        lbl.AutoEllipsis = true;
+                        lbl.Font = new Font("Consolas", 8f);
+                        lbl.ForeColor = Theme.Muted;
+                        t.Controls.Add(lbl, col, row);
+                        t.Controls.Add(BuildValueCell(deployBoxes, key, false), col + 1, row);
+                    }
+                    row++;
+                }
+            }
+
+            AddGroupHeader(t, "组件路径（留空 = 安装包内置目录 runtime\\jdk17、infra\\mysql 等）", row);
+            row++;
+            for (int p = 0; p < compPairs; p++)
+            {
+                for (int slot = 0; slot < 2; slot++)
+                {
+                    int idx = p * 2 + slot;
+                    if (idx >= ComponentsConfig.Items.Length) continue;
+                    ComponentPath it = ComponentsConfig.Items[idx];
+                    int col = slot * 2;
+                    Label lbl = new Label();
+                    string hint = DeployConfig.Hint(it.Key);
+                    lbl.Text = hint.Length > 0 ? it.Key + "\n" + hint : it.Key;
+                    lbl.TextAlign = ContentAlignment.MiddleLeft;
+                    lbl.Dock = DockStyle.Fill;
+                    lbl.AutoSize = false;
+                    lbl.AutoEllipsis = true;
+                    lbl.Font = new Font("Consolas", 8f);
+                    lbl.ForeColor = Theme.Muted;
+                    t.Controls.Add(lbl, col, row);
+                    t.Controls.Add(BuildValueCell(componentBoxes, it.Key, true), col + 1, row);
+                }
+                row++;
             }
 
             Panel bar = new Panel();
@@ -611,7 +712,7 @@ namespace BatAppSetup
             NeonButton save = MakeButton("保存参数", true);
             save.SetBounds(120, 8, 110, 32);
             Label deployHint = new Label();
-            deployHint.Text = "MINIO_DATA_DIR 留空 = data\\minio，可填绝对路径";
+            deployHint.Text = "空值 = 使用 conf\\deploy-defaults.properties 的默认值；数据目录的相对路径按安装目录解析";
             deployHint.AutoSize = true;
             deployHint.Font = Theme.Small;
             deployHint.ForeColor = Theme.Muted;
@@ -628,15 +729,101 @@ namespace BatAppSetup
             save.Click += delegate
             {
                 DeployConfig cfg = CollectDeploy();
+                ComponentsConfig cc = CollectComponents();
                 string bad = ValidateConfigNumbers(cfg, CollectApps());
+                if (bad.Length == 0) bad = ValidatePaths(cfg, cc);
                 if (bad.Length > 0)
                 {
                     MessageBox.Show(bad, "配置有误");
                     return;
                 }
                 cfg.Save(workDir);
-                MessageBox.Show("部署参数已保存到 " + PathHelper.DeployPath(workDir));
+                cc.Save(workDir);
+                MessageBox.Show("部署参数已保存到 " + PathHelper.DeployPath(workDir)
+                    + "\r\n组件路径已保存到 " + PathHelper.ComponentsPath(workDir));
             };
+        }
+
+        private static void AddGroupHeader(TableLayoutPanel t, string title, int row)
+        {
+            Label h = new Label();
+            h.Text = "  " + title;
+            h.Dock = DockStyle.Fill;
+            h.TextAlign = ContentAlignment.MiddleLeft;
+            h.Font = Theme.BodyBold;
+            h.ForeColor = Theme.Neon;
+            h.BackColor = Color.Transparent;
+            t.Controls.Add(h, 0, row);
+            t.SetColumnSpan(h, 4);
+        }
+
+        private static bool IsDirKey(string key)
+        {
+            foreach (string k in DeployConfig.DirKeys)
+                if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        private static bool IsFileKey(string key)
+        {
+            foreach (string k in DeployConfig.FileKeys)
+                if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
+        // 路径类参数右侧带“浏览”按钮，其余参数只有输入框
+        private Control BuildValueCell(Dictionary<string, TextBox> store, string key, bool alwaysDir)
+        {
+            bool isDir = alwaysDir || IsDirKey(key);
+            bool isFile = !alwaysDir && IsFileKey(key);
+
+            TableLayoutPanel cell = new TableLayoutPanel();
+            cell.Dock = DockStyle.Fill;
+            cell.ColumnCount = 2;
+            cell.RowCount = 1;
+            cell.BackColor = Color.Transparent;
+            cell.Margin = new Padding(2, 3, 10, 3);
+            cell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            cell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (isDir || isFile) ? 58 : 0));
+
+            TextBox tb = new TextBox();
+            tb.Dock = DockStyle.Fill;
+            tb.Margin = new Padding(0, 3, 0, 3);
+            Theme.StyleInput(tb);
+            cell.Controls.Add(tb, 0, 0);
+            store[key] = tb;
+
+            if (isDir || isFile)
+            {
+                NeonButton browse = MakeButton("浏览", false);
+                browse.Dock = DockStyle.Fill;
+                browse.Margin = new Padding(4, 2, 0, 2);
+                browse.Click += delegate
+                {
+                    string cur = tb.Text.Trim();
+                    if (isDir)
+                    {
+                        FolderBrowserDialog dlg = new FolderBrowserDialog();
+                        dlg.Description = "选择目录：" + key;
+                        if (Directory.Exists(cur)) dlg.SelectedPath = cur;
+                        if (dlg.ShowDialog(this) == DialogResult.OK) tb.Text = dlg.SelectedPath;
+                    }
+                    else
+                    {
+                        OpenFileDialog dlg = new OpenFileDialog();
+                        dlg.Title = "选择文件：" + key;
+                        dlg.Filter = "所有文件|*.*";
+                        if (cur.Length > 0)
+                        {
+                            try { dlg.InitialDirectory = Path.GetDirectoryName(cur); }
+                            catch { }
+                        }
+                        if (dlg.ShowDialog(this) == DialogResult.OK) tb.Text = dlg.FileName;
+                    }
+                };
+                cell.Controls.Add(browse, 1, 0);
+            }
+            return cell;
         }
 
         private void BuildAppsPage(Panel body)
@@ -1077,6 +1264,18 @@ namespace BatAppSetup
             lblCfgPath.AutoEllipsis = true;
             lblCfgPath.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
             bar.Controls.Add(lblCfgPath);
+
+            // 行高按控件实际高度计算：TableLayoutPanel 子控件默认 3px 外边距，
+            // 高 DPI 下字体放大而固定行高不变，会让输入框/按钮底部被裁掉几个像素
+            capBar.Margin = new Padding(0);
+            srcBar.Margin = new Padding(0);
+            addBar.Margin = new Padding(0);
+            ymlTools.Margin = new Padding(0);
+            addPath.Margin = new Padding(0);
+            left.RowStyles[0].Height = Math.Max(34, 4 + txtCfgName.PreferredHeight + 6);
+            left.RowStyles[3].Height = Math.Max(36, 4 + Math.Max(txtCfgNew.PreferredHeight, addPath.Height) + 6);
+            rt.RowStyles[0].Height = Math.Max(34, 4 + btnNacosPick.Height + 6);
+            rt.RowStyles[1].Height = Math.Max(36, 4 + addProp.Height + 6);
 
             scan.Click += delegate
             {
@@ -1833,6 +2032,12 @@ namespace BatAppSetup
             string target = idx == 1 ? "pg" : (idx == 2 ? "all" : "mysql");
             string targetText = idx == 1 ? "PostgreSQL" : (idx == 2 ? "MySQL + PostgreSQL" : "MySQL");
             string db = txtSqlDb.Text.Trim();
+            string dbBad = BadBatchChar(db);
+            if (dbBad.Length > 0)
+            {
+                MessageBox.Show("数据库名不能包含 " + dbBad + "：" + db);
+                return;
+            }
             StringBuilder msg = new StringBuilder();
             msg.AppendLine("将按列表顺序执行以下脚本：");
             foreach (string s in scripts) msg.AppendLine("  " + s);
@@ -1897,6 +2102,16 @@ namespace BatAppSetup
                     ? "选中的服务都在远程主机，请到对应机器上启动：\r\n" + string.Join("\r\n", remotes.ToArray())
                     : "选中的行没有服务名");
                 return;
+            }
+            // 8-service.bat 以 "action name" 的形式接收参数，名称里有 cmd 元字符会被拆开
+            foreach (string n in names)
+            {
+                string bad = BadBatchChar(n);
+                if (bad.Length > 0)
+                {
+                    MessageBox.Show("服务名不能包含 " + bad + "：" + n + "\r\n请先在「应用服务」页修正名称");
+                    return;
+                }
             }
             if (action == "stop" || action == "restart")
             {
@@ -2098,17 +2313,18 @@ namespace BatAppSetup
                 refreshPending = true;
                 return;
             }
-            DeployConfig cfg = DeployConfig.Load(workDir);
+            DeployConfig cfg = DeployConfig.LoadEffective(workDir);
             List<UnitRow> list = new List<UnitRow>();
 
-            AddUnit(list, cfg, "MySQL", "数据库", "mysql", "MYSQL_HOST", "MYSQL_PORT", 3306, "START_MYSQL", false);
-            AddUnit(list, cfg, "PostgreSQL", "数据库", "pg", "PG_HOST", "PG_PORT", 5432, "START_PG", false);
-            AddUnit(list, cfg, "Redis", "缓存", "redis", "REDIS_HOST", "REDIS_PORT", 6379, "START_REDIS", false);
-            AddUnit(list, cfg, "RocketMQ", "消息队列", "mq", "MQ_HOST", "MQ_NAMESRV_PORT", 9876, "START_MQ", false);
-            AddUnit(list, cfg, "MinIO", "对象存储", "minio", "MINIO_HOST", "MINIO_PORT", 9000, "START_MINIO", false);
-            AddUnit(list, cfg, "Nacos", "注册中心", "nacos", "NACOS_HOST", "NACOS_PORT", 8848, "START_NACOS", false);
-            AddUnit(list, cfg, "GeoServer", "GIS", "geoserver", "GEOSERVER_HOST", "GEOSERVER_PORT", 8080, "START_GEOSERVER", false);
-            AddUnit(list, cfg, "Nginx", "代理", "nginx", "NGINX_HOST", "NGINX_PORT", 80, "START_NGINX", false);
+            const string JAVA = "java.exe,javaw.exe";
+            AddUnit(list, cfg, "MySQL", "数据库", "mysql", "MYSQL_HOST", "MYSQL_PORT", 3306, "START_MYSQL", false, "mysqld.exe");
+            AddUnit(list, cfg, "PostgreSQL", "数据库", "pg", "PG_HOST", "PG_PORT", 5432, "START_PG", false, "postgres.exe");
+            AddUnit(list, cfg, "Redis", "缓存", "redis", "REDIS_HOST", "REDIS_PORT", 6379, "START_REDIS", false, "redis-server.exe");
+            AddUnit(list, cfg, "RocketMQ", "消息队列", "mq", "MQ_HOST", "MQ_NAMESRV_PORT", 9876, "START_MQ", false, JAVA);
+            AddUnit(list, cfg, "MinIO", "对象存储", "minio", "MINIO_HOST", "MINIO_PORT", 9000, "START_MINIO", false, "minio.exe");
+            AddUnit(list, cfg, "Nacos", "注册中心", "nacos", "NACOS_HOST", "NACOS_PORT", 8848, "START_NACOS", false, JAVA);
+            AddUnit(list, cfg, "GeoServer", "GIS", "geoserver", "GEOSERVER_HOST", "GEOSERVER_PORT", 8080, "START_GEOSERVER", false, JAVA);
+            AddUnit(list, cfg, "Nginx", "代理", "nginx", "NGINX_HOST", "NGINX_PORT", 80, "START_NGINX", false, "nginx.exe");
 
             string depHost = HostOf(cfg, "DEPLOY_HOST");
             AppsConfig apps = AppsConfig.Load(workDir);
@@ -2123,6 +2339,7 @@ namespace BatAppSetup
                 u.Port = ParsePort(e.Port, 0);
                 u.Local = IsLocalHost(h, depHost);
                 u.IsApp = true;
+                u.ExpectedImage = JAVA;
                 list.Add(u);
             }
             units = list;
@@ -2144,7 +2361,7 @@ namespace BatAppSetup
             }
             Thread th = new Thread(delegate()
             {
-                HashSet<int> ports = GetListeningPorts();
+                Dictionary<int, List<string>> ports = GetListenerInfo();
                 try
                 {
                     BeginInvoke(new Action(delegate()
@@ -2164,23 +2381,41 @@ namespace BatAppSetup
             th.Start();
         }
 
-        private void FillUnits(HashSet<int> ports)
+        private void FillUnits(Dictionary<int, List<string>> ports)
         {
             if (dgvUnits == null || dgvUnits.IsDisposed) return;
             dgvUnits.Rows.Clear();
             foreach (UnitRow u in units)
             {
-                string st = !u.Local ? "REMOTE" : (ports.Contains(u.Port) ? "UP" : "DOWN");
+                string st;
+                if (!u.Local) st = "REMOTE";
+                else if (!ports.ContainsKey(u.Port)) st = "DOWN";
+                // 端口被监听但进程不是本部署的组件（如 IIS 占用 80）：单独标记，避免误报 UP
+                // 取不到进程名（tasklist 失败）时退回旧逻辑，避免全部误判为被占用
+                else if (u.ExpectedImage.Length > 0 && ports[u.Port].Count > 0 &&
+                         !ImageMatches(ports[u.Port], u.ExpectedImage)) st = "OCCUPIED";
+                else st = "UP";
                 int i = dgvUnits.Rows.Add(u.Name, u.Type, u.Host, u.Port, st, "", "", "");
                 dgvUnits.Rows[i].Tag = u;
                 dgvUnits.Rows[i].Cells["status"].Style.ForeColor =
-                    st == "UP" ? Theme.Ok : (st == "REMOTE" ? Theme.Muted : Color.FromArgb(248, 113, 113));
+                    st == "UP" ? Theme.Ok
+                    : st == "OCCUPIED" ? Color.FromArgb(251, 191, 36)
+                    : st == "REMOTE" ? Theme.Muted : Color.FromArgb(248, 113, 113);
             }
             LayoutUnits();
         }
 
+        private static bool ImageMatches(List<string> images, string expected)
+        {
+            foreach (string name in images)
+                foreach (string want in expected.Split(','))
+                    if (string.Equals(name.Trim(), want.Trim(), StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         private static void AddUnit(List<UnitRow> list, DeployConfig cfg, string name, string type,
-            string key, string hostKey, string portKey, int defPort, string startKey, bool isApp)
+            string key, string hostKey, string portKey, int defPort, string startKey, bool isApp,
+            string expectedImage)
         {
             UnitRow u = new UnitRow();
             u.Name = name;
@@ -2190,14 +2425,22 @@ namespace BatAppSetup
             u.Port = ParsePort(cfg.Get(portKey), defPort);
             u.Local = cfg.Get(startKey) != "0";
             u.IsApp = isApp;
+            u.ExpectedImage = expectedImage;
             list.Add(u);
         }
 
         private static HashSet<int> GetListeningPorts()
         {
-            HashSet<int> set = new HashSet<int>();
+            return new HashSet<int>(GetListenerInfo().Keys);
+        }
+
+        // 端口 -> 监听进程名，用于区分“本部署的组件”和“被其他程序占用”
+        private static Dictionary<int, List<string>> GetListenerInfo()
+        {
+            Dictionary<int, List<string>> map = new Dictionary<int, List<string>>();
             try
             {
+                Dictionary<int, string> images = GetProcessImages();
                 ProcessStartInfo psi = new ProcessStartInfo("netstat", "-ano");
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
@@ -2209,17 +2452,47 @@ namespace BatAppSetup
                 {
                     if (line.IndexOf("LISTENING", StringComparison.OrdinalIgnoreCase) < 0) continue;
                     string[] parts = line.Split(new char[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Length < 2) continue;
+                    if (parts.Length < 5) continue;
                     string local = parts[1];
                     int c = local.LastIndexOf(':');
                     if (c < 0) continue;
-                    string portText = local.Substring(c + 1);
-                    try { set.Add(int.Parse(portText)); }
-                    catch { }
+                    int port, pid;
+                    try { port = int.Parse(local.Substring(c + 1)); }
+                    catch { continue; }
+                    int.TryParse(parts[parts.Length - 1], out pid);
+                    if (!map.ContainsKey(port)) map[port] = new List<string>();
+                    string img = images.ContainsKey(pid) ? images[pid] : "";
+                    if (img.Length > 0 && !map[port].Contains(img)) map[port].Add(img);
                 }
             }
             catch { }
-            return set;
+            return map;
+        }
+
+        private static Dictionary<int, string> GetProcessImages()
+        {
+            Dictionary<int, string> map = new Dictionary<int, string>();
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo("tasklist", "/FO CSV /NH");
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                psi.RedirectStandardOutput = true;
+                Process p = Process.Start(psi);
+                string output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit();
+                foreach (string line in output.Split('\n'))
+                {
+                    string[] cols = line.Trim().Split(',');
+                    if (cols.Length < 2) continue;
+                    string img = cols[0].Trim().Trim('"');
+                    string pidText = cols[1].Trim().Trim('"');
+                    int pid;
+                    if (int.TryParse(pidText, out pid)) map[pid] = img;
+                }
+            }
+            catch { }
+            return map;
         }
 
         private void OnUnitCellClick(DataGridViewCellEventArgs e)
@@ -2534,6 +2807,10 @@ namespace BatAppSetup
             if (txtTarget != null) txtTarget.Text = workDir;
             if (lblWorkDir != null) lblWorkDir.Text = "工作目录  " + workDir;
             ReloadDeploy();
+            // 脚本超时与 Nacos HTTP 超时也跟随配置，避免界面无限等待或超时过短
+            scriptTimeoutSec = ParsePort(lastDeploy == null ? "" : lastDeploy.Get("SCRIPT_TIMEOUT_SEC"), 1800);
+            NacosApi.HttpTimeoutMs = ParsePort(lastDeploy == null ? "" : lastDeploy.Get("IMPORT_TIMEOUT_SEC"), 20) * 1000;
+            ReloadInstallSteps();
             ReloadApps();
             LoadConfigList();
             RefreshUnits();
@@ -2541,9 +2818,13 @@ namespace BatAppSetup
 
         private void ReloadDeploy()
         {
-            DeployConfig cfg = DeployConfig.Load(workDir);
+            DeployConfig cfg = DeployConfig.LoadEffective(workDir);
+            lastDeploy = cfg;
             foreach (string key in DeployConfig.Keys)
                 deployBoxes[key].Text = cfg.Get(key);
+            ComponentsConfig cc = ComponentsConfig.Load(workDir);
+            foreach (ComponentPath it in ComponentsConfig.Items)
+                componentBoxes[it.Key].Text = cc.Get(it.Key);
         }
 
         private DeployConfig CollectDeploy()
@@ -2551,7 +2832,41 @@ namespace BatAppSetup
             DeployConfig cfg = new DeployConfig();
             foreach (string key in DeployConfig.Keys)
                 cfg.Set(key, deployBoxes[key].Text.Trim());
+            // 保留 deploy.properties 里用户手工添加的自定义键
+            cfg.CopyExtrasFrom(lastDeploy);
             return cfg;
+        }
+
+        private ComponentsConfig CollectComponents()
+        {
+            ComponentsConfig cfg = new ComponentsConfig();
+            foreach (ComponentPath it in ComponentsConfig.Items)
+                cfg.Set(it.Key, componentBoxes[it.Key].Text.Trim());
+            return cfg;
+        }
+
+        private void ReloadInstallSteps()
+        {
+            if (lstInstallSteps == null) return;
+            lstInstallSteps.Items.Clear();
+            List<InstallStep> steps = InstallStepsConfig.Load(workDir);
+            if (steps.Count == 0)
+                lstInstallSteps.Items.Add("未找到 conf\\install-steps.cfg：只复制文件，不执行安装步骤", false);
+            else
+                foreach (InstallStep s in steps)
+                    lstInstallSteps.Items.Add(s, s.Enabled);
+            FitInstallSteps();
+        }
+
+        // 步骤数可随 install-steps.cfg 变化，按条目高度撑开，避免最后一行被列表边框裁掉
+        private void FitInstallSteps()
+        {
+            if (installLayout == null || lstInstallSteps == null) return;
+            int h = lstInstallSteps.ItemHeight * Math.Max(1, lstInstallSteps.Items.Count) + 10;
+            if (h < 150) h = 150;
+            if (h > 460) h = 460;
+            installLayout.RowStyles[3].Height = h;
+            installLayout.PerformLayout();
         }
 
         private void ReloadApps()
@@ -2618,6 +2933,18 @@ namespace BatAppSetup
             string jdk = dc.Get("INFRA_JDK").Trim();
             if (jdk.Length > 0 && jdk != "17" && jdk != "21")
                 return "INFRA_JDK 只能是 17 或 21，当前为：" + jdk;
+            // env.bat 用 for /f 加载 deploy.properties，调用方开着延迟展开，
+            // 值里的这些字符会被吞掉或截断（"!" 密码会静默变成另一个密码）
+            string[] acctKeys = new string[] { "MYSQL_USER", "MYSQL_PWD", "PG_USER", "PG_PWD",
+                "REDIS_PWD", "MINIO_USER", "MINIO_PWD", "NACOS_USER", "NACOS_PWD" };
+            foreach (string key in acctKeys)
+            {
+                string v = dc.Get(key);
+                string badAcct = BadBatchChar(v);
+                if (badAcct.Length > 0)
+                    return key + " 不能包含 " + badAcct + "：" + v
+                        + "\r\n账号/密码请改用字母、数字和 @ # $ * _ - . + 等符号";
+            }
             Dictionary<int, string> used = new Dictionary<int, string>();
             foreach (string key in DeployConfig.Keys)
             {
@@ -2631,6 +2958,11 @@ namespace BatAppSetup
                     return key + " 与 " + used[p] + " 端口重复：" + p;
                 used[p] = key;
             }
+            // env.bat 里推导出来的端口，这里提前算一遍，避免 GUI 放过冲突
+            string derived = AddDerivedPort(used, dc, "NACOS_PORT", 1000, "NACOS_CLUSTER_PORT");
+            if (derived.Length == 0) derived = AddDerivedPort(used, dc, "NACOS_PORT", 1001, "NACOS_CLUSTER_PORT2");
+            if (derived.Length == 0) derived = AddDerivedPort(used, dc, "MQ_BROKER_PORT", -2, "MQ_VIP_PORT");
+            if (derived.Length > 0) return derived;
             Dictionary<string, bool> names = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             foreach (AppEntry e in ac.Items)
             {
@@ -2638,6 +2970,21 @@ namespace BatAppSetup
                 if (names.ContainsKey(e.Name))
                     return "服务名重复：" + e.Name;
                 names[e.Name] = true;
+                // apps.cfg 用 | 分隔，服务名还会拼进日志文件名，这些字符会写坏配置或日志路径
+                string badName = BadBatchChar(e.Name);
+                if (badName.Length > 0)
+                    return "服务名不能包含 " + badName + "：" + e.Name;
+                if (e.Name.IndexOfAny(new char[] { '*', '?', ':', '\\', '/' }) >= 0)
+                    return "服务名不能包含 * ? : \\ /：" + e.Name;
+                string badJar = BadBatchChar(e.Jar);
+                if (badJar.Length > 0)
+                    return "服务 " + e.Name + " 的 jar 路径不能包含 " + badJar + "：" + e.Jar;
+                if (e.Jvm.IndexOf('|') >= 0)
+                    return "服务 " + e.Name + " 的 JVM 参数不能包含 |：" + e.Jvm;
+                if (e.Extra.IndexOf('|') >= 0)
+                    return "服务 " + e.Name + " 的额外参数不能包含 |：" + e.Extra;
+                if (e.Host.IndexOf('|') >= 0)
+                    return "服务 " + e.Name + " 的主机不能包含 |：" + e.Host;
                 string port = e.Port == null ? "" : e.Port.Trim();
                 int p;
                 if (!int.TryParse(port, out p) || p < 1 || p > 65535)
@@ -2649,13 +2996,88 @@ namespace BatAppSetup
             return "";
         }
 
+        // NACOS_CLUSTER_PORT(+1000/+1001) 与 MQ_VIP_PORT(-2) 由 env.bat 运行时推导，
+        // deploy-defaults.properties 里没有这些键，需要单独校验
+        private static string AddDerivedPort(Dictionary<int, string> used, DeployConfig dc,
+            string baseKey, int delta, string derivedKey)
+        {
+            if (dc.Get(derivedKey).Trim().Length > 0) return "";
+            int p;
+            if (!int.TryParse(dc.Get(baseKey).Trim(), out p)) return "";
+            int d = p + delta;
+            if (d < 1 || d > 65535)
+                return "由 " + baseKey + " 推导出的 " + derivedKey + " 端口不合法：" + d;
+            if (used.ContainsKey(d))
+                return derivedKey + "（由 " + baseKey + " 推导）与 " + used[d] + " 端口重复：" + d;
+            used[d] = derivedKey;
+            return "";
+        }
+
+        // 脚本里大量路径/名称没有加引号，或位于 if (...) 块内，这些字符会破坏解析
+        private static string BadBatchChar(string v)
+        {
+            if (v.Length == 0) return "";
+            if (v.IndexOf(' ') >= 0) return "空格";
+            if (v.IndexOf('%') >= 0) return "%";
+            if (v.IndexOf('!') >= 0) return "!";
+            if (v.IndexOf('^') >= 0) return "^";
+            if (v.IndexOf('&') >= 0) return "&";
+            if (v.IndexOf('"') >= 0) return "\"";
+            if (v.IndexOf('|') >= 0) return "|";
+            if (v.IndexOf('(') >= 0) return "(";
+            if (v.IndexOf(')') >= 0) return ")";
+            if (v.IndexOf('<') >= 0) return "<";
+            if (v.IndexOf('>') >= 0) return ">";
+            return "";
+        }
+
+        // 组件路径要塞进带引号的命令行，空格安全，其余字符仍然会破坏 cmd 解析
+        private static string BadBatchCharNoSpace(string v)
+        {
+            return BadBatchChar(v.Replace(" ", ""));
+        }
+
+        private static string ValidatePaths(DeployConfig dc, ComponentsConfig cc)
+        {
+            // 数据目录 / 配置文件大多落在 C:\Program Files、C:\ProgramData 下，空格是允许的；
+            // 脚本里引用这些路径的地方都已加引号
+            foreach (string key in DeployConfig.DirKeys)
+            {
+                string v = dc.Get(key).Trim();
+                string bad = BadBatchCharNoSpace(v);
+                if (bad.Length > 0) return key + " 路径不能包含 " + bad + "：" + v;
+            }
+            foreach (string key in DeployConfig.FileKeys)
+            {
+                string v = dc.Get(key).Trim();
+                string bad = BadBatchCharNoSpace(v);
+                if (bad.Length > 0) return key + " 路径不能包含 " + bad + "：" + v;
+            }
+            foreach (ComponentPath it in ComponentsConfig.Items)
+            {
+                string v = cc.Get(it.Key).Trim();
+                // 组件目录常见于 C:\Program Files\...，空格是允许的：
+                // 脚本里引用这些路径的启动命令都已加引号
+                string bad = BadBatchCharNoSpace(v);
+                if (bad.Length > 0) return it.Key + " 路径不能包含 " + bad + "：" + v;
+            }
+            return "";
+        }
+
         private bool DeployDirty()
         {
-            DeployConfig disk = DeployConfig.Load(workDir);
+            // 与界面显示一致：默认值 + 本机覆盖
+            DeployConfig disk = DeployConfig.LoadEffective(workDir);
             foreach (string key in DeployConfig.Keys)
             {
                 TextBox box = deployBoxes[key];
                 if (box.Text.Trim() != disk.Get(key).Trim()) return true;
+            }
+            ComponentsConfig cdisk = ComponentsConfig.Load(workDir);
+            foreach (ComponentPath it in ComponentsConfig.Items)
+            {
+                TextBox box = componentBoxes[it.Key];
+                if (box.Text.Trim() != cdisk.Get(it.Key).Trim()) return true;
             }
             return false;
         }
@@ -2732,7 +3154,7 @@ namespace BatAppSetup
             {
                 try
                 {
-                    File.WriteAllText(f, txtCfgFile.Text, new UTF8Encoding(false));
+                    FileOps.WriteAllTextAtomic(f, txtCfgFile.Text);
                     count = 1;
                     ymlDirty = false;
                     return true;
@@ -2904,29 +3326,120 @@ namespace BatAppSetup
         }
 
         // ---------------- install ----------------
-        private void OnInstall()
+        // 校验并规范化安装目录；失败返回 null 并给出提示。
+        // 只接受本地绝对路径：相对路径、"D:" 这类驱动器相对路径和 UNC 都会被脚本按别的目录解析。
+        private static string NormalizeInstallTarget(string raw, string srcFull, out string error)
         {
-            if (running) { MessageBox.Show("有任务正在执行，请稍候"); return; }
-            string target = txtTarget.Text.Trim();
-            if (target.Length == 0) { MessageBox.Show("请选择安装目录"); return; }
-            if (target.IndexOfAny(new char[] { ' ', '%', '!', '^', '&', '"', '|' }) >= 0)
+            error = null;
+            string target = raw.Trim();
+            if (target.Length == 0) { error = "请选择安装目录"; return null; }
+            bool driveLetter = (target[0] >= 'A' && target[0] <= 'Z') || (target[0] >= 'a' && target[0] <= 'z');
+            if (target.Length < 3 || !driveLetter || target[1] != ':' || (target[2] != '\\' && target[2] != '/'))
             {
-                MessageBox.Show("安装路径不能包含空格或 % ! ^ & \" | 字符");
-                return;
+                error = "安装路径必须是本地绝对路径，例如 D:\\bat_application。\r\n请不要使用相对路径或 \\\\server\\share 形式的网络路径。";
+                return null;
             }
-            try { target = Path.GetFullPath(target).TrimEnd('\\'); }
-            catch { MessageBox.Show("安装路径不合法"); return; }
+            if (target.IndexOfAny(new char[] { ' ', '%', '!', '^', '&', '"', '|', '(', ')', '<', '>', '*', '?' }) >= 0)
+            {
+                error = "安装路径不能包含空格或 % ! ^ & \" | ( ) < > * ? 字符";
+                return null;
+            }
+            try { target = Path.GetFullPath(target); }
+            catch { error = "安装路径不合法"; return null; }
 
-            string src = PathHelper.Root;
-            string srcFull;
-            try { srcFull = Path.GetFullPath(src).TrimEnd('\\'); }
-            catch { srcFull = src; }
+            string rootDir = Path.GetPathRoot(target);
+            if (string.Equals(target, rootDir, StringComparison.OrdinalIgnoreCase))
+            {
+                error = "不能直接安装到盘符根目录，请使用子目录，例如 D:\\bat_application";
+                return null;
+            }
+            if (target.Length > 3 && target.EndsWith("\\")) target = target.TrimEnd('\\');
+            if (target.Length > 170)
+            {
+                error = "安装路径过长（" + target.Length + " 个字符，建议不超过 170）。\r\nWindows 的 260 字符路径上限会导致复制失败，请改用更短的目录";
+                return null;
+            }
+            if (!Directory.Exists(rootDir))
+            {
+                error = "盘符不存在：" + rootDir + "\r\n请检查该磁盘是否已挂载";
+                return null;
+            }
+            if (File.Exists(target))
+            {
+                error = "安装路径是文件而不是目录：" + target;
+                return null;
+            }
+
+            // 不能装进安装包内部（会把包自己递归复制进去），安装包也不能位于目标目录内部
             if (!string.Equals(target, srcFull, StringComparison.OrdinalIgnoreCase) &&
                 target.StartsWith(srcFull + "\\", StringComparison.OrdinalIgnoreCase))
             {
-                MessageBox.Show("安装目录不能位于当前目录内部，请选择其他路径");
+                error = "安装目录不能位于当前目录内部，请选择其他路径";
+                return null;
+            }
+            if (!string.Equals(target, srcFull, StringComparison.OrdinalIgnoreCase) &&
+                srcFull.StartsWith(target + "\\", StringComparison.OrdinalIgnoreCase))
+            {
+                error = "安装包位于安装目录内部，请把安装包移动到安装目录之外后再安装";
+                return null;
+            }
+
+            // 目标目录不存在时，向上找到最近已存在的目录做一次写入探测，避免装到只读位置后中途失败
+            string probeDir = target;
+            while (probeDir != null && probeDir.Length > 0 && !Directory.Exists(probeDir))
+            {
+                // 上级链上如果是文件，CreateDirectory 一定失败，提前报出来
+                if (File.Exists(probeDir))
+                {
+                    error = "安装路径的上级是文件而不是目录：" + probeDir;
+                    return null;
+                }
+                string up = Path.GetDirectoryName(probeDir);
+                if (up == null || up.Length == 0 || up.Length == probeDir.Length) break;
+                probeDir = up;
+            }
+            if (probeDir == null || probeDir.Length == 0) probeDir = rootDir;
+            string probeFile = Path.Combine(probeDir, ".ba-write-test-" + DateTime.Now.Ticks);
+            bool writable = false;
+            try
+            {
+                using (FileStream fs = File.Create(probeFile)) { }
+                writable = true;
+            }
+            catch { }
+            finally
+            {
+                try { if (File.Exists(probeFile)) File.Delete(probeFile); } catch { }
+            }
+            if (!writable)
+            {
+                error = "安装目录不可写：" + probeDir + "\r\n请换一个目录，或以管理员身份运行 Setup.exe";
+                return null;
+            }
+            return target;
+        }
+
+        private void OnInstall()
+        {
+            if (running) { MessageBox.Show("有任务正在执行，请稍候"); return; }
+
+            string src = PathHelper.Root;
+            string srcFull;
+            try
+            {
+                srcFull = Path.GetFullPath(src);
+                if (srcFull.Length > 3 && srcFull.EndsWith("\\")) srcFull = srcFull.TrimEnd('\\');
+            }
+            catch { srcFull = src; }
+
+            string targetError;
+            string target = NormalizeInstallTarget(txtTarget.Text, srcFull, out targetError);
+            if (target == null)
+            {
+                if (targetError != null && targetError.Length > 0) MessageBox.Show(targetError);
                 return;
             }
+
             if (!Directory.Exists(Path.Combine(src, "runtime")) ||
                 !Directory.Exists(Path.Combine(src, "infra")))
             {
@@ -2941,8 +3454,10 @@ namespace BatAppSetup
                 return;
             }
             DeployConfig dc = CollectDeploy();
+            ComponentsConfig cc = CollectComponents();
             AppsConfig ac = CollectApps();
             string bad = ValidateConfigNumbers(dc, ac);
+            if (bad.Length == 0) bad = ValidatePaths(dc, cc);
             if (bad.Length > 0)
             {
                 MessageBox.Show(bad, "配置有误");
@@ -2956,8 +3471,16 @@ namespace BatAppSetup
                 if (yr[i].RelPath.Length > 0 && !Path.IsPathRooted(yr[i].RelPath))
                     yr[i].FilePath = Path.Combine(target, yr[i].RelPath);
             }
-            bool doInit = chkInit.Checked;
+            List<InstallStep> steps = new List<InstallStep>();
+            for (int i = 0; i < lstInstallSteps.Items.Count; i++)
+            {
+                InstallStep s = lstInstallSteps.Items[i] as InstallStep;
+                if (s != null && lstInstallSteps.GetItemChecked(i)) steps.Add(s);
+            }
             bool mkLink = chkShortcut.Checked;
+            bool copyToSame = string.Equals(srcFull, target, StringComparison.OrdinalIgnoreCase);
+            // 目标目录已存在部署配置时按覆盖安装处理：保留目标机的部署参数与服务清单
+            bool overlay = !copyToSame && File.Exists(PathHelper.DeployPath(target));
 
             running = true;
             SetRunButtons(false);
@@ -2968,7 +3491,7 @@ namespace BatAppSetup
                 {
                     InstallLog("源目录  : " + src);
                     InstallLog("目标目录: " + target);
-                    if (string.Equals(srcFull, target, StringComparison.OrdinalIgnoreCase))
+                    if (copyToSame)
                     {
                         InstallLog("目标目录就是当前目录，跳过文件复制");
                     }
@@ -2978,12 +3501,10 @@ namespace BatAppSetup
                         {
                             HashSet<int> listening = GetListeningPorts();
                             List<string> busy = new List<string>();
-                            string[] infraPorts = new string[] { "MYSQL_PORT", "PG_PORT", "REDIS_PORT",
-                                "MINIO_PORT", "MQ_NAMESRV_PORT", "MQ_BROKER_PORT", "NACOS_PORT",
-                                "GEOSERVER_PORT", "NGINX_PORT" };
-                            DeployConfig oldDc = DeployConfig.Load(target);
-                            foreach (string key in infraPorts)
+                            DeployConfig oldDc = DeployConfig.LoadEffective(target);
+                            foreach (string key in DeployConfig.Keys)
                             {
+                                if (!key.EndsWith("_PORT", StringComparison.OrdinalIgnoreCase)) continue;
                                 int p;
                                 if (int.TryParse(oldDc.Get(key), out p) && listening.Contains(p))
                                     busy.Add(key + "=" + p);
@@ -3013,23 +3534,46 @@ namespace BatAppSetup
                         }
                         FileOps.CopyPayload(src, target, InstallLog);
                     }
-                    dc.Save(target);
-                    ac.Save(target);
-                    YmlEditor.Save(target, yr);
-                    InstallLog("配置已写入 " + PathHelper.ConfDir(target));
+                    if (overlay)
+                    {
+                        // 覆盖安装：CopyPayload 已保留 deploy.properties / components.properties /
+                        // apps.cfg / service-hosts.cfg / nacos-meta.cfg / nginx.conf 等目标机配置，
+                        // 这里不能再写一遍，否则界面上的（源目录）默认值会把目标机配置覆盖掉。
+                        InstallLog("检测到目标目录已有部署，保留其 deploy.properties / components.properties / apps.cfg / service-hosts.cfg / nginx.conf");
+                        InstallLog("如需修改目标机配置，请在安装完成后于“部署参数 / 服务清单”页调整并保存");
+                    }
+                    else
+                    {
+                        dc.Save(target);
+                        cc.Save(target);
+                        ac.Save(target);
+                        YmlEditor.Save(target, yr);
+                        InstallLog("配置已写入 " + PathHelper.ConfDir(target));
+                    }
                     if (mkLink)
                     {
                         try { CreateShortcuts(target); InstallLog("桌面快捷方式已创建"); }
                         catch (Exception ex) { InstallLog("快捷方式失败: " + ex.Message); }
                     }
-                    int initRc = 0;
-                    if (doInit)
+
+                    int failedSteps = 0;
+                    for (int i = 0; i < steps.Count; i++)
                     {
-                        InstallLog("开始初始化数据目录 ...");
-                        initRc = RunProcess(@"bin\0-init.bat", target, InstallLog);
-                        if (initRc != 0)
-                            InstallLog("FAIL 初始化数据失败（退出码 " + initRc + "），请查看上方日志");
+                        InstallStep st = steps[i];
+                        InstallLog("");
+                        InstallLog("[" + (i + 1) + "/" + steps.Count + "] " + st.Name + "  (" + st.Script + ")");
+                        int rc = RunProcess(st.Script, target, InstallLog);
+                        if (rc == 0) continue;
+                        failedSteps++;
+                        InstallLog("FAIL " + st.Name + "（退出码 " + rc + "），详见上方日志");
+                        if (st.StopOnFail)
+                        {
+                            InstallLog("该步骤配置为失败即停止，后续步骤已跳过");
+                            break;
+                        }
                     }
+                    if (steps.Count == 0) InstallLog("未勾选安装步骤，安装到此结束");
+
                     SafeBeginInvoke(delegate()
                     {
                         workDir = target;
@@ -3038,8 +3582,8 @@ namespace BatAppSetup
                         ymlDirty = false;
                         lastCfgIndex = -1;
                         ReloadAll();
-                        InstallLog(initRc != 0 ? "安装完成，但初始化数据失败" : "安装完成");
-                        if (initRc != 0 && lblStatus != null)
+                        InstallLog(failedSteps == 0 ? "安装完成" : "安装完成，但有 " + failedSteps + " 个步骤失败");
+                        if (failedSteps > 0 && lblStatus != null)
                         {
                             lblStatus.Text = "●  有失败";
                             statusColor = Color.FromArgb(248, 113, 113);
@@ -3190,8 +3734,36 @@ namespace BatAppSetup
             };
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
-            p.WaitForExit();
-            return p.ExitCode;
+            bool exited = p.WaitForExit(Math.Max(1, scriptTimeoutSec) * 1000);
+            if (!exited)
+            {
+                // Kill 只结束 cmd.exe，bat 拉起的 mysqld / initdb / java 仍会留在后台
+                KillTree(p.Id);
+                try { p.Kill(); } catch { }
+                log("脚本执行超时（" + scriptTimeoutSec + " 秒），已强制结束: " + path);
+                log("如属正常耗时较长，可调大 deploy.properties 的 SCRIPT_TIMEOUT_SEC");
+                return 124;
+            }
+            // 不做二次 WaitForExit：bat 用 start 拉起的常驻进程（mysqld/postgres/java）
+            // 会一直持有输出管道，等管道关闭会让界面永远停在"执行中"。
+            // cmd 已退出即视为脚本结束，残余日志行由异步回调自行送达。
+            int rc = p.ExitCode;
+            p.Dispose();
+            return rc;
+        }
+
+        // taskkill /T 会连同子进程一起结束；Process.Kill() 只杀直接子进程
+        private static void KillTree(int pid)
+        {
+            try
+            {
+                ProcessStartInfo psi = new ProcessStartInfo("taskkill", "/F /T /PID " + pid);
+                psi.UseShellExecute = false;
+                psi.CreateNoWindow = true;
+                Process t = Process.Start(psi);
+                if (t != null) t.WaitForExit(5000);
+            }
+            catch { }
         }
 
         private void SetRunButtons(bool enabled)

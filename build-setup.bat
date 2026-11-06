@@ -21,7 +21,9 @@ if not exist "%ICON%" (
     makeicon.exe "%ICON%"
     if errorlevel 1 goto :FAIL
 )
-"%CSC%" /nologo /target:winexe /win32icon:%ICON% /out:Setup.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll installer\Program.cs installer\ConfigStore.cs installer\Theme.cs installer\MainForm.cs
+rem  the manifest makes the tool ask for administrator rights: stop / firewall /
+rem  taskkill must run elevated to touch services started by another account
+"%CSC%" /nologo /target:winexe /win32icon:%ICON% /win32manifest:"installer\Setup.exe.manifest" /out:Setup.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll installer\Program.cs installer\ConfigStore.cs installer\Theme.cs installer\MainForm.cs
 if errorlevel 1 goto :FAIL
 
 echo.

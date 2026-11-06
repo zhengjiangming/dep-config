@@ -1,0 +1,16 @@
+<service>
+  <id>rocketmq-namesrv</id>
+  <name>rocketmq-namesrv</name>
+  <description>bat_application RocketMQ NameServer</description>
+  <executable>cmd.exe</executable>
+  <arguments>/c mqnamesrv.cmd</arguments>
+  <workingdirectory>D:\rocketmq-all-4.9.7-bin-release\bin</workingdirectory>
+  <env name="ROCKETMQ_HOME" value="D:\rocketmq-all-4.9.7-bin-release"/>
+  <env name="JAVA_HOME" value="C:\Users\1\.jdks\graalvm-ce-17.0.9"/>
+  <startmode>Automatic</startmode>
+  <logpath>D:\bao\bat_application\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+</service>

@@ -97,6 +97,9 @@ set "S=%~2"
 set "T=%~3"
 if "!S:~-1!"=="\" set "S=!S:~0,-1!"
 if "!T:~-1!"=="\" set "T=!T:~0,-1!"
+rem resolve to full paths so a relative source still compares equal to the package target
+for %%I in ("!S!") do set "S=%%~fI"
+for %%I in ("!T!") do set "T=%%~fI"
 if /i "!S!"=="!T!" (
     echo   SKIP  %~1  already inside package
     exit /b 0

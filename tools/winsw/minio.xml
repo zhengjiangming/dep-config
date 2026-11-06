@@ -1,0 +1,18 @@
+<service>
+  <id>minio</id>
+  <name>minio</name>
+  <description>bat_application MinIO object storage</description>
+  <executable>D:\minio\minio.exe</executable>
+  <arguments>server "D:\minio\data" --address ":9000" --console-address ":9001"</arguments>
+  <workingdirectory>D:\minio</workingdirectory>
+  <env name="MINIO_ROOT_USER" value="minioadmin"/>
+  <env name="MINIO_ROOT_PASSWORD" value="minioadmin"/>
+  <env name="MINIO_ACCESS_KEY" value="minioadmin"/>
+  <env name="MINIO_SECRET_KEY" value="minioadmin"/>
+  <startmode>Automatic</startmode>
+  <logpath>D:\bao\bat_application\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>4</keepFiles>
+  </log>
+</service>

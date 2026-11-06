@@ -4,22 +4,49 @@ call "%~dp0..\conf\env.bat"
 title Start microservices
 set "NO_PAUSE="
 if /i "%~1"=="auto" set "NO_PAUSE=1"
-set "CURL=%APP_HOME%\runtime\curl\curl.exe"
-if not exist "%CURL%" set "CURL=curl.exe"
+set "CURL=%CURL_EXE%"
+set "HTTP_CHECK="
+if exist "%CURL%" (
+    set "HTTP_CHECK=curl"
+) else (
+    set "CURL=curl.exe"
+    where curl.exe >nul 2>&1
+    if not errorlevel 1 set "HTTP_CHECK=curl"
+)
+if not defined HTTP_CHECK (
+    set "PS_EXE=%POWERSHELL_EXE%"
+    if exist "!PS_EXE!" (
+        set "HTTP_CHECK=powershell"
+    ) else (
+        where powershell.exe >nul 2>&1
+        if not errorlevel 1 (
+            set "HTTP_CHECK=powershell"
+            set "PS_EXE=powershell"
+        )
+    )
+)
 set "SELF_HOST=%DEPLOY_HOST%"
 if /i "%SELF_HOST%"=="localhost" set "SELF_HOST=127.0.0.1"
 
 echo.
 echo ===== Waiting for Nacos %NACOS_ADDR% =====
-call :WAITNACOS 180
+call :WAITNACOS %WAIT_NACOS_HTTP_SEC%
 if errorlevel 1 (
     echo Nacos not ready, abort. Check NACOS_HOST / NACOS_PORT in conf\deploy.properties.
     if not defined NO_PAUSE pause
     exit /b 1
 )
 
+rem  this script writes logs, create the folder on demand (env.bat stays read-only)
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>&1
+
 echo.
 echo ===== Start services assigned to this host (%DEPLOY_HOST%) =====
+if not exist "%APP_HOME%\conf\apps.cfg" (
+    echo   FAIL conf\apps.cfg not found
+    if not defined NO_PAUSE pause
+    exit /b 1
+)
 set /a N=0
 set /a SKIPPED=0
 set "FAILED="
@@ -71,6 +98,11 @@ if not defined NO_PAUSE pause
 exit /b 0
 
 :START_ONE
+call :VALIDPORT "!SVC_PORT!"
+if errorlevel 1 (
+    echo   [SKIP] !SVC_NAME!  bad port "!SVC_PORT!", fix conf\apps.cfg
+    exit /b 1
+)
 if not defined SVC_JDK set "SVC_JDK=%INFRA_JDK%"
 set "SVC_JAVA="
 if "!SVC_JDK!"=="17" set "SVC_JAVA=!JDK17_HOME!\bin\java.exe"
@@ -83,16 +115,33 @@ if not exist "!SVC_JAR!" (
     echo   [MISS] !SVC_NAME!  jar not found: !SVC_JAR!
     exit /b 1
 )
+call :PORTSKIP !SVC_PORT! "!SVC_NAME!" java.exe
+if errorlevel 2 (
+    echo   [FAIL] !SVC_NAME! port !SVC_PORT! is used by another program
+    exit /b 1
+)
+if errorlevel 1 exit /b 0
 echo   [START] !SVC_NAME!  port=!SVC_PORT!  jdk=!SVC_JDK!
-start "!SVC_NAME!" /D "%APP_HOME%" /MIN cmd /c "!SVC_JAVA! !JVM_BASE! !APP_OPTS! !NACOS_OPTS! !SVC_JVM! -jar !SVC_JAR! !SVC_EXTRA! >> !LOG_DIR!\!SVC_NAME!.log 2>&1"
-call :WAITPORT !SVC_PORT! 180 "!SVC_NAME!"
+start "!SVC_NAME!" /D "%APP_HOME%" /MIN cmd /c ""!SVC_JAVA!" !JVM_BASE! !APP_OPTS! !NACOS_OPTS! !SVC_JVM! -jar !SVC_JAR! !SVC_EXTRA! >> "!LOG_DIR!\!SVC_NAME!.log" 2>&1"
+call :WAITPORT !SVC_PORT! %WAIT_APP_SEC% "!SVC_NAME!"
 exit /b %errorlevel%
 
 rem ---------- wait until Nacos HTTP is reachable ----------
 :WAITNACOS
 set /a WN_N=0
+if /i "%HTTP_CHECK%"=="powershell" echo   NOTE curl not bundled, using PowerShell for the Nacos health check
+if not defined HTTP_CHECK (
+    echo   NOTE neither curl nor powershell found, waiting for Nacos port %PORT_NACOS% only
+    call :WAITPORT %PORT_NACOS% %~1 "Nacos"
+    exit /b !errorlevel!
+)
 :WAITNACOS_LOOP
-"%CURL%" -s -f -m 3 "http://%NACOS_ADDR%/nacos/v1/console/health/liveness" >nul 2>&1
+if /i not "%HTTP_CHECK%"=="curl" goto :WAITNACOS_PS
+"%CURL%" -s -f -m %HTTP_TIMEOUT_SEC% "http://%NACOS_ADDR%/nacos/v1/console/health/liveness" >nul 2>&1
+goto :WAITNACOS_EVAL
+:WAITNACOS_PS
+"%PS_EXE%" -NoProfile -Command "try { $null = Invoke-WebRequest -UseBasicParsing -TimeoutSec %HTTP_TIMEOUT_SEC% 'http://%NACOS_ADDR%/nacos/v1/console/health/liveness'; exit 0 } catch { exit 1 }" >nul 2>&1
+:WAITNACOS_EVAL
 if not errorlevel 1 (
     echo   OK   Nacos %NACOS_ADDR% ready
     exit /b 0
@@ -107,6 +156,11 @@ goto :WAITNACOS_LOOP
 
 rem ---------- wait until port is listening ----------
 :WAITPORT
+call :VALIDPORT "%~1"
+if errorlevel 1 (
+    echo   FAIL %~3 invalid port "%~1"
+    exit /b 1
+)
 set /a WP_N=0
 :WAITPORT_LOOP
 netstat -ano | findstr /r /c:":%~1 .*LISTENING" >nul 2>&1
@@ -121,3 +175,43 @@ if %WP_N% GEQ %~2 (
 )
 ping -n 2 127.0.0.1 >nul
 goto :WAITPORT_LOOP
+
+rem ---------- port helpers ----------
+rem  exit /b 1 unless %1 is an integer in 1..65535.
+rem  An empty port would make the netstat regex match every listener.
+:VALIDPORT
+if "%~1"=="" exit /b 1
+for /f "delims=0123456789" %%A in ("%~1") do exit /b 1
+if %~1 LEQ 0 exit /b 1
+if %~1 GTR 65535 exit /b 1
+exit /b 0
+
+rem  %1 port, %2 component, %3 expected process image
+rem  exit 0 = port is free, start the component
+rem  exit 1 = port is held by the expected process, assume it is running
+rem  exit 2 = port is held by another program, report a failure and skip
+:PORTSKIP
+call :VALIDPORT "%~1"
+if errorlevel 1 exit /b 0
+set "PS_PIDS="
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr /r /c:":%~1 .*LISTENING"') do set "PS_PIDS=!PS_PIDS! %%P"
+if not defined PS_PIDS exit /b 0
+set "PS_FOREIGN="
+for %%P in (!PS_PIDS!) do (
+    call :PORTIMAGE %%P "%~3"
+    if errorlevel 1 set "PS_FOREIGN=!PS_FOREIGN! %%P"
+)
+if defined PS_FOREIGN (
+    echo   [FAIL] %~2 port %~1 is held by another program, PID:!PS_FOREIGN!
+    echo          expected %~3, stop that program or change the port
+    exit /b 2
+)
+echo   [SKIP] %~2 port %~1 already listening ^(%~3^), assume it is running
+exit /b 1
+
+rem  exit 0 when PID %1 runs as image %2, exit 1 otherwise
+:PORTIMAGE
+set "PI_IMG="
+for /f "tokens=1 delims=," %%I in ('tasklist /FI "PID eq %~1" /FO CSV /NH 2^>nul ^| findstr /v /b /c:"INFO:"') do set "PI_IMG=%%~I"
+if defined PI_IMG if /i "!PI_IMG!"=="%~2" exit /b 0
+exit /b 1

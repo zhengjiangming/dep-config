@@ -15,10 +15,14 @@ call :SHOWI %PORT_GEOSERVER% GeoServer "%GEOSERVER_HOST%" %START_GEOSERVER%
 call :SHOWI %PORT_NGINX% Nginx "%NGINX_HOST%" %START_NGINX%
 echo.
 echo ===== Services / Engine =====
-for /f "usebackq eol=# tokens=1,3 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do call :SHOWSVC "%%A" "%%B"
+if exist "%APP_HOME%\conf\apps.cfg" (
+    for /f "usebackq eol=# tokens=1,3 delims=|" %%A in ("%APP_HOME%\conf\apps.cfg") do call :SHOWSVC "%%A" "%%B"
+) else (
+    echo   [FAIL] conf\apps.cfg not found
+)
 echo.
 echo Nacos console: http://%NACOS_HOST%:%PORT_NACOS%/nacos
-pause
+if /i not "%~1"=="auto" pause
 exit /b 0
 
 :SHOWSVC
